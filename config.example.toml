@@ -1,0 +1,65 @@
+# Copy to local/config.toml and edit. local/ is gitignored.
+# Run 'mail-triage accounts' to discover your account prefixes.
+#
+# IMPORTANT: in TOML every top-level setting must appear *before* the first
+# [[source]] table. Anything written after one is read as part of that table,
+# not as a setting of its own. Hence the ordering here.
+
+# Where filed mail lands: the account whose folder tree is the filing
+# structure. Mail from every source below is filed into it, crossing accounts
+# where it must, so there is one place to look rather than one per account.
+filing_account        = "iCloud"
+filing_account_prefix = "imap://AAAAAAAA"
+
+# Accounts to learn from. Empty means "only the filing account".
+# Add an archive account's prefix here to learn from it too — useful if older
+# mail was moved to local storage but uses the same folder names.
+training_accounts = []
+
+# Folder-name patterns excluded from training (fnmatch syntax, case-insensitive).
+# "[[]Gmail]*", not "[Gmail]*": these are globs, in which "[Gmail]" is a
+# character class matching one of G m a i l.
+training_exclusions = [
+    "INBOX", "Junk", "Spam", "Sent*", "Drafts*", "Outbox",
+    "Deleted*", "Trash", "Archive", "Recovered Messages*",
+    "[[]Gmail]*",
+]
+
+# Minimum confidence to propose a move at all
+confidence_threshold = 0.7
+# Minimum confidence for --auto to move without asking
+auto_threshold = 0.9
+# Recency decay: a filing decision this old counts half as much
+half_life_days = 365.0
+# How much more a correction counts than a historical filing
+correction_weight = 10.0
+
+# Share of a sender's recent mail that must be deleted (not filed) before
+# filing is vetoed outright. 1.0 means "veto only when nothing at all has
+# been filed recently" — a sender you still file sometimes stays proposed.
+# Counted per account: filing and binning habits differ between them, and a
+# pooled ratio would describe neither.
+delete_veto_ratio = 1.0
+# How many days back to compare filing against deletion. Should match (or
+# sit inside) how long Trash keeps messages before purging them, or the
+# comparison mixes long filing history with a much shorter deletion history.
+deletion_window_days = 75
+
+# Each account whose inbox gets triaged. 'name' must match the name Mail
+# shows; 'prefix' is scheme://first-8-chars-of-account-uuid.
+[[source]]
+name   = "iCloud"
+prefix = "imap://AAAAAAAA"
+inbox  = "INBOX"
+trash  = "Deleted Messages"
+
+# Gmail keeps inbox membership as a label rather than a mailbox — mail-triage
+# handles that. 'ignore' keeps Gmail's pseudo-folders out of the filing and
+# deletion counts: "[Gmail]/All Mail" holds every message in the account, so
+# counting it as a filing would mean nothing was ever seen as binned.
+[[source]]
+name   = "Gmail"
+prefix = "imap://BBBBBBBB"
+inbox  = "INBOX"
+trash  = "[Gmail]/Bin"
+ignore = ["[[]Gmail]*"]

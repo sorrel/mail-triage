@@ -1,0 +1,119 @@
+# CLAUDE.md
+
+Guidance for Claude Code (claude.ai/code) when working in this repository.
+
+## Non-negotiable safety rules
+
+1. **Never write to Apple Mail's database.** Read from a snapshot copy only,
+   opened read-only. Every mutation goes through AppleScript.
+2. **Never move, delete or send real mail without explicit approval.** Tasks
+   that touch a live mailbox are checkpoints: stop, describe exactly what will
+   happen to which message, and wait. Test on one message, verify it, and undo
+   it before running any batch.
+3. **Never verify with a live run.** Use `--dry-run`, the test suite, or the
+   `FakeMail` interface. A scripted live run once moved three real messages
+   when its input ran out; they were recovered from the journal, but the
+   lesson stands.
+4. **Never commit to `master`.** Work on `feature/<name>` branches.
+5. **Nothing personal in the repository.** No addresses, account UUIDs, real
+   folder names or subject lines in `src/`, `tests/` or `docs/`.
+   `tests/test_no_personal_data.py` enforces this — run it before publishing
+   anything.
+
+## Layout
+
+- `src/mail_triage/` — the package (src layout; the only route to it is the
+  install)
+- `local/` — **gitignored.** Trained model, rules, run journals, real config
+- `docs/superpowers/` — design specs and the implementation plan
+- Run everything through `uv run`
+
+## Architecture
+
+Bulk reads come from a snapshot of `~/Library/Mail/V10/MailData/Envelope Index`
+(with its `-wal` and `-shm` companions — omitting them yields stale data that
+looks convincingly like a bug). Writes go through `osascript`.
+
+| Module | Responsibility |
+|---|---|
+| `envelope.py` | Snapshot and read the mail database |
+| `folders.py` | Parse mailbox URLs; normalise folder names |
+| `corpus.py` | Filing history into recency-weighted training examples |
+| `model/sender.py` | Stage A: sender and domain → folder |
+| `model/tokens.py` | Stage B: naive Bayes over subject tokens |
+| `model/classify.py` | Stage orchestration, guards, precedence |
+| `guards.py` | Do-not-file: flagged, or may need a reply |
+| `invoices.py` | Bill detection |
+| `rules.py` | Hard per-sender rules |
+| `asking.py` | Choosing and asking about uncertain senders |
+| `review.py` | Proposal table and the confirm loops |
+| `execute.py` | The only module that moves mail |
+| `deletion.py` | Deletion as negative evidence, counted per account |
+| `journal.py` | Run journal and undo |
+| `mail_app.py` | AppleScript bridge, plus `FakeMail` for tests |
+
+### Several accounts
+
+`Config.sources` lists every account whose inbox is triaged; a config naming
+only `account_url_prefix` synthesises one in `Config.__post_init__`, so
+there is a single code path. Filing crosses accounts into
+`filing_account`'s tree — one filing structure, not one per account —
+whilst binning and deletion evidence stay within each source. A message's
+own account is derived from `account_prefix(message.mailbox_url)`, never
+passed in: only the message knows which inbox it came from.
+
+### Precedence — the safety-critical part
+
+Highest first. Get this wrong and mail is filed contrary to instructions.
+
+1. Per-message guards (a bill, flagged, may need a reply)
+2. Hard rules (file / bin / leave alone)
+3. The deletion veto
+4. Stage A, then stage B
+
+A rule is about a *sender*; a guard is about a *message*. Messages win.
+
+### Things learnt the hard way
+
+- **Mail's AppleScript `id` equals the SQLite `ROWID`, and it is not stable.**
+  A message that moves gets a new one. The RFC-822 `Message-ID`, captured
+  before the move, is the only durable handle undo has.
+- **`name of mailboxes of account` returns a flat list of leaf names.** Source
+  the folder list from the database instead, which preserves nested paths and
+  real capitalisation. Address nested mailboxes as
+  `mailbox "Parent/Child" of account "…"`.
+- **Any AppleScript `whose` query over a large mailbox costs seconds.** That
+  is the floor; do not try to optimise it.
+- **A Gmail inbox is a label, not a mailbox.** Every Gmail message's
+  `messages.mailbox` points at `[Gmail]/All Mail`; inbox membership is a row
+  in `labels(message_id, mailbox_id)`. Use `EnvelopeReader.inbox_messages`,
+  which unions both. Joining `labels` to `messages` drops stale rows for
+  free — 11 raw rows became the 9 messages Mail itself reported.
+- **`[Gmail]` is an fnmatch character class.** `[Gmail]*` matches any name
+  beginning with g, m, a, i or l — `Accounts`, `Local`, `Invoices` — whilst
+  *appearing* to work, because it also catches `[Gmail]/All Mail` via the
+  `a` of `All Mail`. Write `[[]Gmail]*`. The failure mode is a silent hole
+  in the training corpus, not an unexcluded All Mail.
+- **In TOML, every top-level key must precede the first `[[source]]` table.**
+  Anything after one is parsed as part of it. This broke the first draft of
+  `config.example.toml`; `load_config` now says so by name when it happens.
+
+## Conventions
+
+- **British English** everywhere: code, comments, output, docs, commits.
+- **Try the simple approach first.** Add complexity only when something
+  demands it.
+- **Measure rather than argue.** Several design decisions here were reversed
+  by evaluating against held-out real mail; a plausible-sounding rule is not
+  evidence. Record the numbers in the commit message.
+- **Terminal output:** never use `len()` for column widths — emoji occupy two
+  columns. Use `review.display_width()`.
+
+## Testing
+
+```bash
+uv run pytest -q
+```
+
+All tests use synthetic fixtures and `FakeMail`. No test touches a real
+mailbox or shells out to `osascript`.

@@ -1,0 +1,53 @@
+# Everything that identifies the mailbox: trained model, per-sender rules,
+# run journals, real config, cached headers. Nothing here is ever committed.
+local/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtual environments. .venv.nosync is the iCloud-safe variant — iCloud sets
+# the hidden flag on dot-named directories, and Python 3.13 skips hidden .pth
+# files, which silently breaks editable installs.
+.venv/
+.venv.nosync/
+venv/
+
+# Tooling caches. .pytest_cache writes its own .gitignore, but relying on a
+# third-party side effect for this is not a plan.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Agent and editor scratch space
+.superpowers/
+.claude/
+.idea/
+.vscode/
+
+# Secrets
+.env
+.env.*
+
+# macOS
+.DS_Store
+
+# Mail data must never be committed under any circumstances. Snapshots are
+# taken into temporary directories, but a stray copy in the working tree
+# would be the single worst leak this project could produce, so it is refused
+# by name wherever it appears.
+Envelope Index*
+*.mbox
+*.emlx
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm

@@ -1,0 +1,430 @@
+"""The only component that changes anything in Mail.
+
+Everything else in mail-triage is read-only. Mutations go through AppleScript
+because it is the sole supported write path — writing to Mail's SQLite database
+directly corrupts it.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from typing import Protocol
+
+
+class MailError(RuntimeError):
+    """Base class for Mail interaction failures."""
+
+
+class MailNotRunningError(MailError):
+    """Mail is not running. We never launch it on the user's behalf."""
+
+
+class MailboxNotFoundError(MailError):
+    """The target mailbox does not exist in the account."""
+
+
+class MessageNotFoundError(MailError):
+    """The message is no longer where we expected it."""
+
+
+class AmbiguousMessageError(MailError):
+    """More than one message shares a message_key in the searched mailbox.
+
+    Message-IDs are supposed to be unique but duplicates genuinely occur (a
+    message copied between mailboxes, a list that sends both a direct and a
+    list copy, a re-delivered message). Silently acting on an arbitrary match
+    would risk moving the wrong copy, which is worse than refusing outright —
+    so this is raised instead of picking one.
+    """
+
+
+class MailInterface(Protocol):
+    def inbox_message_ids(self, account: str) -> list[int]: ...
+    def mailbox_names(self, account: str) -> list[str]: ...
+    def move_message(
+        self,
+        message_id: int,
+        folder: str,
+        account: str,
+        source_folder: str = "INBOX",
+        message_key: str | None = None,
+        source_account: str | None = None,
+    ) -> None: ...
+    def message_headers(self, message_id: int) -> dict[str, str]: ...
+    def message_key(self, message_id: int, source_folder: str, account: str) -> str: ...
+
+
+def _escape_applescript_string(value: str) -> str:
+    """Escape a string for safe interpolation inside an AppleScript double-quoted literal.
+
+    Folder names, account names and other values interpolated into generated
+    AppleScript source come from the user's own mailbox names, not from an
+    attacker — but an unescaped double quote or backslash would still corrupt
+    the generated script and could send a message to the wrong place. Escape
+    backslashes first, then double quotes, matching AppleScript's own string
+    escaping rules. A literal newline or carriage return in a folder name would
+    otherwise split the ``-e`` script across lines and corrupt its structure,
+    so those are escaped too, using AppleScript's own ``\\n``/``\\r`` string
+    escapes (which osascript reconstitutes as the real character at run time).
+    """
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return escaped.replace("\n", "\\n").replace("\r", "\\r")
+
+
+def _run(script: str) -> str:
+    result = subprocess.run(
+        ["osascript", "-e", script], capture_output=True, text=True, timeout=120
+    )
+    if result.returncode != 0:
+        error = result.stderr.strip()
+        if "not running" in error or "-600" in error:
+            raise MailNotRunningError("Mail is not running. Please open it and try again.")
+        raise MailError(error)
+    return result.stdout.strip()
+
+
+# AppleScript/AppleEvent error numbers, trailing in parentheses on the error
+# text, e.g. "Mail got an error: Can't get mailbox ... (-1728)". Numbers are
+# stable across macOS locales; the surrounding prose is not — it is localised
+# and macOS renders it with a typographic apostrophe ("Can't", U+2019), so
+# matching on the number is the only reliable way to tell "no such mailbox"
+# apart from "no such message" apart from other failures. A missing object
+# (the destination mailbox does not exist) raises -1728; an out-of-range/absent
+# element (the message id is not present in the source mailbox) raises -1719.
+_ERROR_NO_SUCH_OBJECT = "(-1728)"
+_ERROR_INVALID_INDEX = "(-1719)"
+
+# Marker text for the multiple-match case, raised by our own generated
+# AppleScript (see ``_move_script``'s message_key branch) rather than by
+# Mail itself, so there is no AppleEvent error number to key off — the text
+# is ours, verbatim, so a plain substring check is exact rather than a guess.
+_ERROR_AMBIGUOUS_MESSAGE_KEY = "mail-triage: ambiguous message_key"
+
+
+def _classify_move_failure(
+    text: str, message_id: int, folder: str, account: str, source_folder: str
+) -> MailError:
+    """Turn a raw AppleScript failure from a move attempt into a typed exception.
+
+    Both native failure modes go through the same object-specifier chain
+    (mailbox, then message, then move), so naive prose matching (e.g.
+    "mailbox" appears in the text) cannot distinguish them: the
+    message-not-found error text is *itself* phrased around the mailbox the
+    message was expected to be in (see the docstring above). Classify on the
+    trailing AppleEvent error number instead. The ambiguous-match case is
+    raised by our own script (not by Mail), so it is classified on its own
+    literal marker text rather than a number.
+    """
+    if _ERROR_AMBIGUOUS_MESSAGE_KEY in text:
+        return AmbiguousMessageError(
+            f"Message key matches more than one message in '{source_folder}'; refusing to guess which"
+        )
+    if _ERROR_NO_SUCH_OBJECT in text:
+        return MailboxNotFoundError(f"No mailbox '{folder}' in account '{account}'")
+    if _ERROR_INVALID_INDEX in text:
+        return MessageNotFoundError(f"Message {message_id} not found in '{source_folder}'")
+    # Unrecognised failure shape — do not guess which of the two it is.
+    return MailError(text)
+
+
+class AppleScriptMail:
+    """Drives Mail.app via osascript."""
+
+    def inbox_message_ids(self, account: str) -> list[int]:
+        account_escaped = _escape_applescript_string(account)
+        script = (
+            f'tell application "Mail" to get id of messages of mailbox "INBOX" '
+            f'of account "{account_escaped}"'
+        )
+        output = _run(script)
+        return [int(part) for part in output.split(", ") if part.strip()]
+
+    def mailbox_names(self, account: str) -> list[str]:
+        """Leaf names of the account's mailboxes.
+
+        Note: Mail returns a flat list of LEAF names, so this cannot be used to
+        match nested folders — 41 of the 44 folders in the trained model are
+        nested. The authoritative folder list comes from the envelope database
+        via ``folder_path``, which preserves full paths and capitalisation. This
+        method is kept only for checking that an account is reachable.
+        """
+        account_escaped = _escape_applescript_string(account)
+        script = f'tell application "Mail" to get name of mailboxes of account "{account_escaped}"'
+        output = _run(script)
+        return [part.strip() for part in output.split(", ") if part.strip()]
+
+    def _move_script(
+        self,
+        message_id: int,
+        folder: str,
+        account: str,
+        source_folder: str,
+        message_key: str | None = None,
+        source_account: str | None = None,
+    ) -> str:
+        # ``folder`` is a full path such as "Parent/Child". Path addressing is
+        # required: the user's folders are nested, and a leaf-name lookup is both
+        # unable to reach them and ambiguous when a leaf name repeats.
+        #
+        # ``message_id`` is interpolated as a plain integer literal here, so no
+        # precision is lost in the script we generate. Note, though, that when
+        # Mail itself *reports* an invalid-index failure it renders the id in
+        # scientific notation (e.g. "id = 9.99999999E+8"), i.e. AppleScript
+        # coerces it to a real for the error message. Today's ids are around
+        # 450,000 — far below the point where a double loses integer precision
+        # (2**53) — but this is worth remembering if ids ever grow much larger.
+        #
+        # ``message_key``, when supplied, is the durable RFC-822 Message-ID and
+        # is used for the lookup instead of the numeric id. This matters for
+        # undo: a message's numeric id changes when it moves and moving it
+        # back does not restore the old value, so by the time undo runs the
+        # numeric id recorded at move time is worthless — only the message_key
+        # still identifies the same message.
+        #
+        # ``account`` names the *target*. A Gmail message filed into the iCloud
+        # tree has a different account at each end, so the source mailbox is
+        # addressed with ``source_account``, which defaults to the target and
+        # thereby leaves every within-account move exactly as it was. Note that
+        # a cross-account move is a copy-and-delete over IMAP rather than a
+        # relabelling: the message leaves the source account.
+        folder_escaped = _escape_applescript_string(folder)
+        account_escaped = _escape_applescript_string(account)
+        source_account_escaped = _escape_applescript_string(source_account or account)
+        source_escaped = _escape_applescript_string(source_folder)
+        if message_key is not None:
+            # A message_key lookup can match more than one message: RFC-822
+            # Message-IDs are supposed to be unique but duplicates genuinely
+            # occur (a message copied between mailboxes, a list that sends
+            # both a direct and a list copy, a re-delivered message). Fetch
+            # every match and refuse to act if there is more than one, rather
+            # than "first message ... whose message id is" silently picking
+            # an arbitrary one — undo moving the wrong copy without a word
+            # would be worse than undo refusing to proceed.
+            key_escaped = _escape_applescript_string(message_key)
+            return (
+                'tell application "Mail"\n'
+                f'  set theBox to mailbox "{folder_escaped}" of account "{account_escaped}"\n'
+                f'  set matchingMessages to (messages of mailbox "{source_escaped}" '
+                f'of account "{source_account_escaped}" whose message id is "{key_escaped}")\n'
+                "  if (count of matchingMessages) is 0 then\n"
+                f'    error "No message with message id \\"{key_escaped}\\" in mailbox '
+                f'\\"{source_escaped}\\"." number -1719\n'
+                "  else if (count of matchingMessages) > 1 then\n"
+                f'    error "mail-triage: ambiguous message_key — message id '
+                f'\\"{key_escaped}\\" matches " & (count of matchingMessages) & '
+                f'" messages in mailbox \\"{source_escaped}\\"."\n'
+                "  end if\n"
+                "  set theMessage to item 1 of matchingMessages\n"
+                "  move theMessage to theBox\n"
+                "end tell"
+            )
+        return (
+            'tell application "Mail"\n'
+            f'  set theBox to mailbox "{folder_escaped}" of account "{account_escaped}"\n'
+            f'  set theMessage to (first message of mailbox "{source_escaped}" '
+            f'of account "{source_account_escaped}" whose id is {message_id})\n'
+            "  move theMessage to theBox\n"
+            "end tell"
+        )
+
+    def move_message(
+        self,
+        message_id: int,
+        folder: str,
+        account: str,
+        source_folder: str = "INBOX",
+        message_key: str | None = None,
+        source_account: str | None = None,
+    ) -> None:
+        script = self._move_script(
+            message_id, folder, account, source_folder, message_key, source_account
+        )
+        try:
+            _run(script)
+        except MailNotRunningError:
+            raise
+        except MailError as error:
+            raise _classify_move_failure(
+                str(error), message_id, folder, account, source_folder
+            ) from error
+
+    def message_headers(self, message_id: int) -> dict[str, str]:
+        """Fetch raw headers. Mail's database does not store these."""
+        script = (
+            'tell application "Mail"\n'
+            f"  set theMessage to (first message of inbox whose id is {message_id})\n"
+            "  return all headers of theMessage\n"
+            "end tell"
+        )
+        return _parse_headers(_run(script))
+
+    def message_key(self, message_id: int, source_folder: str, account: str) -> str:
+        """Return the RFC-822 Message-ID, which survives moves.
+
+        The numeric AppleScript id does not: moving a message changes it, and
+        moving it back does not restore the old value. Callers that need to
+        undo a move later must capture this *before* the move, whilst the
+        message is still findable by its numeric id.
+
+        ``source_folder`` and ``account`` are required, not defaulted: a
+        default of ``account=""`` cannot produce a valid query for any real
+        account, and a default ``source_folder="INBOX"`` is silently wrong
+        for a message anywhere else. Getting either wrong should fail loudly
+        at the call site, not quietly query the wrong mailbox.
+        """
+        source_escaped = _escape_applescript_string(source_folder)
+        account_escaped = _escape_applescript_string(account)
+        script = (
+            'tell application "Mail"\n'
+            f'  set theMessage to (first message of mailbox "{source_escaped}" '
+            f'of account "{account_escaped}" whose id is {message_id})\n'
+            "  return message id of theMessage\n"
+            "end tell"
+        )
+        return _run(script)
+
+
+def _parse_headers(raw: str) -> dict[str, str]:
+    """Parse RFC-822 headers, joining folded continuation lines.
+
+    Real messages can repeat a header name (``Received`` is the classic case,
+    once per relay hop). This is a flat ``dict``, so a repeated name keeps only
+    its *last* occurrence — harmless for the fields mail-triage currently reads
+    (e.g. ``List-Unsubscribe``, ``Subject``), which are not normally repeated,
+    but worth knowing if a future caller needs a header that legitimately is.
+    """
+    headers: dict[str, str] = {}
+    current: str | None = None
+    for line in raw.splitlines():
+        if line[:1] in (" ", "\t") and current:
+            headers[current] += " " + line.strip()
+        elif ":" in line:
+            name, _, value = line.partition(":")
+            current = name.strip()
+            headers[current] = value.strip()
+    return headers
+
+
+class FakeMail:
+    """In-memory stand-in so the suite never touches real mail.
+
+    Message ids are tracked per mailbox (INBOX plus any named folders), so
+    tests can exercise ``move_message``'s ``source_folder`` parameter — which
+    the undo path (Task 10) needs to move a message back from wherever it was
+    filed, not just from INBOX.
+    """
+
+    def __init__(
+        self,
+        inbox: list[int],
+        mailboxes: list[str],
+        headers: dict[int, dict[str, str]] | None = None,
+        folders: dict[str, list[int]] | None = None,
+        keys: dict[int, str] | None = None,
+        accounts: dict[str, dict[str, list[int]]] | None = None,
+    ) -> None:
+        self._mailboxes = list(mailboxes)
+        self._headers = headers or {}
+        # Contents are keyed (account, folder). The legacy ``inbox``/``folders``
+        # arguments land under "*", a wildcard that answers for any account
+        # name — exactly the account-blind behaviour every test predating
+        # cross-account filing expects. ``accounts`` names them explicitly,
+        # which is what a two-account test needs so that "INBOX" in Gmail and
+        # "INBOX" in iCloud do not collide.
+        self._folder_contents: dict[tuple[str, str], list[int]] = {
+            ("*", "INBOX"): list(inbox)
+        }
+        for name, ids in (folders or {}).items():
+            self._folder_contents[("*", name)] = list(ids)
+        for account_name, contents in (accounts or {}).items():
+            for name, ids in contents.items():
+                self._folder_contents[(account_name, name)] = list(ids)
+        # Without ``accounts`` the fake is account-blind: every lookup and
+        # every move resolves to the wildcard bucket whatever account name it
+        # is handed. Anything else would strand a moved message under the
+        # account it was moved to, where the legacy readers cannot see it.
+        self._per_account = bool(accounts)
+        # Numeric id -> durable RFC-822 message_key, mirroring the real bridge:
+        # the numeric id is whatever database row currently holds the message,
+        # the key travels with the message across moves. Kept per numeric id
+        # (not per message) because that is exactly how ``message_key`` and the
+        # key-based lookup in ``move_message`` resolve one to the other in
+        # practice — via whichever numeric id currently holds a given key.
+        self._keys = dict(keys or {})
+        self.moved: list[tuple[int, str, str, str]] = []
+        self.sent: list[tuple[str, str]] = []
+
+    def _contents(self, account: str, folder: str) -> list[int]:
+        """The list backing one mailbox, creating it on first use.
+
+        Falls back to the wildcard bucket so a fake built the legacy way
+        answers for whatever account name it is asked about.
+        """
+        if not self._per_account:
+            account = "*"
+        key = (account, folder)
+        if key not in self._folder_contents and ("*", folder) in self._folder_contents:
+            key = ("*", folder)
+        return self._folder_contents.setdefault(key, [])
+
+    def inbox_message_ids(self, account: str) -> list[int]:
+        return list(self._contents(account, "INBOX"))
+
+    def folder_message_ids(self, folder: str, account: str = "*") -> list[int]:
+        return list(self._contents(account, folder))
+
+    def mailbox_names(self, account: str) -> list[str]:
+        return list(self._mailboxes)
+
+    def message_key(self, message_id: int, source_folder: str, account: str) -> str:
+        # source_folder/account are accepted (not just ignored) to match
+        # MailInterface exactly and to mirror the real bridge's requirement
+        # that both name a mailbox that actually exists before it will answer.
+        if source_folder not in self._mailboxes and source_folder != "INBOX":
+            raise MailboxNotFoundError(f"No mailbox '{source_folder}'")
+        return self._keys.get(message_id, "")
+
+    def move_message(
+        self,
+        message_id: int,
+        folder: str,
+        account: str,
+        source_folder: str = "INBOX",
+        message_key: str | None = None,
+        source_account: str | None = None,
+    ) -> None:
+        source_account = source_account or account
+        # Mirror AppleScriptMail's classification: a mailbox that does not
+        # exist at all (destination or source) is MailboxNotFoundError; a
+        # message absent from a mailbox that does exist is MessageNotFoundError.
+        if folder not in self._mailboxes and folder != "INBOX":
+            raise MailboxNotFoundError(f"No mailbox '{folder}'")
+        if source_folder not in self._mailboxes and source_folder != "INBOX":
+            raise MailboxNotFoundError(f"No mailbox '{source_folder}'")
+        source_contents = self._contents(source_account, source_folder)
+        if message_key is not None:
+            # Resolve the durable key to whatever numeric id currently holds
+            # it in source_folder — the numeric id recorded at move time is
+            # not trustworthy here, exactly as with the real bridge. A key
+            # is supposed to be unique but duplicates genuinely occur, so
+            # every match is counted (not just the first) and more than one
+            # refuses to act, mirroring AppleScriptMail's count-based check.
+            matches = [mid for mid in source_contents if self._keys.get(mid) == message_key]
+            if not matches:
+                raise MessageNotFoundError(
+                    f"No message with key '{message_key}' in '{source_folder}'"
+                )
+            if len(matches) > 1:
+                raise AmbiguousMessageError(
+                    f"Message key '{message_key}' matches {len(matches)} messages in "
+                    f"'{source_folder}'; refusing to guess which"
+                )
+            message_id = matches[0]
+        elif message_id not in source_contents:
+            raise MessageNotFoundError(f"Message {message_id} not in '{source_folder}'")
+        source_contents.remove(message_id)
+        self._contents(account, folder).append(message_id)
+        self.moved.append((message_id, folder, account, source_folder))
+
+    def message_headers(self, message_id: int) -> dict[str, str]:
+        return dict(self._headers.get(message_id, {}))
