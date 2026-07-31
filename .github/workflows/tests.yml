@@ -1,0 +1,25 @@
+# Runs the test suite, which includes the guards that stop personal data
+# reaching this repository. Those guards are the reason this workflow is
+# worth having on a project of this size: a leak is not caught by review.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to release tags. Pinning to a full commit SHA is stricter
+      # still, and worth doing if this ever handles anything sensitive in CI.
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-extras --dev
+      - run: uv run pytest -q
