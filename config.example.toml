@@ -63,3 +63,15 @@ prefix = "imap://BBBBBBBB"
 inbox  = "INBOX"
 trash  = "[Gmail]/Bin"
 ignore = ["[[]Gmail]*"]
+
+# An Exchange/Outlook account. The scheme is ews:// rather than imap://,
+# which needs no special handling. Its bin is "Deleted Items" and its junk
+# folder is "Junk Email" (caught by the shared "Junk*" pattern).
+# "Conversation History" is written by the mail client itself, so it is
+# ignored rather than read as a filing decision.
+[[source]]
+name   = "Exchange"
+prefix = "ews://CCCCCCCC"
+inbox  = "Inbox"
+trash  = "Deleted Items"
+ignore = ["Conversation History"]

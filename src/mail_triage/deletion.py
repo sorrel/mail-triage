@@ -51,7 +51,12 @@ _DELETED_FOLDER_PATTERNS = ["Deleted*", "Trash"]
 
 # Folders that represent no filing decision at all: still in the inbox,
 # junk, sent mail, drafts. Ignored entirely rather than counted as "filed".
-_IGNORED_FOLDER_PATTERNS = ["INBOX", "Junk", "Spam", "Sent*", "Drafts*", "Outbox"]
+#
+# "Junk*" rather than "Junk": Exchange calls its junk folder "Junk Email",
+# which the bare pattern missed — so every spam message counted as evidence
+# that the sender's mail gets *filed*, inflating the filed side of the ratio
+# and suppressing the veto that exists to catch senders who are only binned.
+_IGNORED_FOLDER_PATTERNS = ["INBOX", "Junk*", "Spam", "Sent*", "Drafts*", "Outbox"]
 
 
 @dataclass(frozen=True)
