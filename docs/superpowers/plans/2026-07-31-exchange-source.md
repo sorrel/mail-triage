@@ -381,9 +381,12 @@ The deferred keep-local requirement is explicitly out of scope in both spec
 and plan, and Task 2 Step 9 names the resulting interim risk rather than
 hiding it.
 
-**Not covered, deliberately.** Adding `TheKey` and `CIISEC` to
-`local/identifying-terms.txt` was done during the design work, not deferred
-to this plan; the guard run in Task 2 Step 6 confirms it holds.
+**Not covered, deliberately.** Extending `local/identifying-terms.txt` with
+this account's folder names was done during the design work, not deferred to
+this plan; the guard run in Task 2 Step 6 confirms it holds. (Those names are
+not repeated here — writing them down in order to say they are protected
+would publish the very thing being protected. The guard caught exactly that
+mistake in an earlier draft of this paragraph.)
 
 **Type consistency.** `Source(name, prefix, inbox, trash, ignore)` is used
 identically in both tasks and matches `src/mail_triage/config.py`.

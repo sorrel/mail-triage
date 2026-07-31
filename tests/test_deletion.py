@@ -25,6 +25,10 @@ ICLOUD = Source(name="iCloud", prefix="imap://AAAAAAAA", trash="Deleted Messages
 GMAIL = Source(
     name="Gmail", prefix="imap://BBBBBBBB", trash="[Gmail]/Bin", ignore=["[[]Gmail]*"]
 )
+EXCHANGE = Source(
+    name="Exchange", prefix="ews://CCCCCCCC", inbox="Inbox",
+    trash="Deleted Items", ignore=["Conversation History"],
+)
 
 
 def make_config(tmp_path, **overrides):
@@ -234,3 +238,52 @@ def test_an_ignored_folder_creates_no_empty_bucket(tmp_path):
     config = make_config(tmp_path)
     rows = [row("a@example.com", "imap://AAAAAAAA/INBOX", NOW - 100)]
     assert build_deletion_index(FakeReader(rows), config, ICLOUD, now=NOW) == {}
+
+
+# --- Exchange folder names ------------------------------------------------------
+#
+# "Junk Email" is Exchange's name for the junk folder, and the shared ignore
+# list only had "Junk". Counted as a filing, spam becomes evidence that the
+# sender's mail gets kept — the opposite of what it means — and it suppresses
+# the veto that catches senders whose mail is only ever binned.
+
+def test_junk_email_is_not_counted_as_a_filing(tmp_path):
+    config = make_config(tmp_path)
+    rows = [row("a@example.com", "ews://CCCCCCCC/Junk%20Email", NOW - 100)]
+    assert build_deletion_index(FakeReader(rows), config, EXCHANGE, now=NOW) == {}
+
+
+def test_plain_junk_is_still_not_counted_as_a_filing(tmp_path):
+    """The widened pattern must not lose what the old one caught."""
+    config = make_config(tmp_path)
+    rows = [row("a@example.com", "ews://CCCCCCCC/Junk", NOW - 100)]
+    assert build_deletion_index(FakeReader(rows), config, EXCHANGE, now=NOW) == {}
+
+
+def test_a_folder_merely_starting_with_junk_is_still_ignored(tmp_path):
+    """"Junk*" is deliberately broad: any junk-ish folder is not a filing."""
+    config = make_config(tmp_path)
+    rows = [row("a@example.com", "ews://CCCCCCCC/Junk%20Mail", NOW - 100)]
+    assert build_deletion_index(FakeReader(rows), config, EXCHANGE, now=NOW) == {}
+
+
+def test_exchange_deleted_items_counts_as_a_deletion(tmp_path):
+    config = make_config(tmp_path)
+    rows = [row("a@example.com", "ews://CCCCCCCC/Deleted%20Items", NOW - 100)]
+    stats = build_deletion_index(FakeReader(rows), config, EXCHANGE, now=NOW)["a@example.com"]
+    assert (stats.filed, stats.deleted) == (0, 1)
+
+
+def test_a_source_ignore_entry_is_not_counted_as_a_filing(tmp_path):
+    """Conversation History is written by the mail client, not by the user."""
+    config = make_config(tmp_path)
+    rows = [row("a@example.com", "ews://CCCCCCCC/Conversation%20History", NOW - 100)]
+    assert build_deletion_index(FakeReader(rows), config, EXCHANGE, now=NOW) == {}
+
+
+def test_a_real_exchange_folder_is_still_counted_as_a_filing(tmp_path):
+    """The ignores must not swallow genuine filing decisions."""
+    config = make_config(tmp_path)
+    rows = [row("a@example.com", "ews://CCCCCCCC/Parent", NOW - 100)]
+    stats = build_deletion_index(FakeReader(rows), config, EXCHANGE, now=NOW)["a@example.com"]
+    assert (stats.filed, stats.deleted) == (1, 0)
