@@ -34,6 +34,16 @@ def test_no_reply_style_variants_are_bulk():
     assert is_bulk("bounce@service.example", None) is True
 
 
+def test_separated_do_not_reply_variants_are_bulk():
+    # Real senders use an underscored "do_not_reply@" and add no
+    # List-Unsubscribe header, so the unseparated "donotreply@" pattern
+    # missed them entirely and bulk notifications were held back as though a
+    # person had written them.
+    assert is_bulk("do_not_reply@email.apple.example", None) is True
+    assert is_bulk("do-not-reply@service.example", None) is True
+    assert is_bulk("do.not.reply@service.example", None) is True
+
+
 def test_list_unsubscribe_header_marks_bulk():
     assert is_bulk("newsletter@shop.example", {"List-Unsubscribe": "<mailto:x@shop.example>"}) is True
 
