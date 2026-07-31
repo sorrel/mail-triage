@@ -19,6 +19,23 @@ ALLOWED_DOMAINS = {"example.com", "example.org", "example.net"}
 # here in order to assert its absence would publish it.
 TERMS_FILE = ROOT / "local" / "identifying-terms.txt"
 
+# Domains that are allowed to appear, matched exactly or as a parent domain.
+# Never as a substring: "anthropic.com" in domain would also accept
+# "anthropic.com.evil.example", and the whole point of this file is that its
+# allowlist is the last thing standing between a real address and a public
+# repository. CodeQL flagged exactly that on 31 July 2026
+# (py/incomplete-url-substring-sanitization).
+_ALLOWED_SUFFIXES = ("users.noreply.github.com", "anthropic.com")
+
+
+def _is_allowed_domain(domain: str) -> bool:
+    domain = domain.casefold().rstrip(".,)\"'")
+    if domain in ALLOWED_DOMAINS or domain == "example" or domain.endswith(".example"):
+        return True
+    return any(
+        domain == suffix or domain.endswith("." + suffix) for suffix in _ALLOWED_SUFFIXES
+    )
+
 
 def _source_files():
     return sorted(SOURCE.rglob("*.py"))
@@ -145,10 +162,8 @@ def test_no_real_email_addresses_anywhere_publishable():
         if not path.exists():
             continue
         for match in pattern.findall(path.read_text()):
-            domain = match.split("@", 1)[1].casefold().rstrip(".,)\"'")
-            if domain in ALLOWED_DOMAINS or domain.endswith(".example"):
-                continue
-            if domain.endswith("users.noreply.github.com") or "anthropic.com" in domain:
+            domain = match.split("@", 1)[1]
+            if _is_allowed_domain(domain):
                 continue
             offences.append(f"{path.relative_to(ROOT)}: {match}")
     assert offences == [], f"Possible real addresses: {offences}"
@@ -239,3 +254,17 @@ def test_source_and_docs_are_not_accidentally_ignored():
     for path in ["src/mail_triage/cli.py", "tests/conftest.py", "README.md",
                  "docs/superpowers/plans/2026-07-26-mail-triage.md"]:
         assert not _is_ignored(path), f"{path} is wrongly ignored"
+
+
+def test_the_domain_allowlist_is_not_a_substring_match():
+    """A lookalike domain must not be waved through.
+
+    "anthropic.com" in domain would accept "anthropic.com.evil.example" —
+    the flaw CodeQL reported. Exact and parent-domain matches only.
+    """
+    assert _is_allowed_domain("anthropic.com")
+    assert _is_allowed_domain("api.anthropic.com")
+    assert _is_allowed_domain("users.noreply.github.com")
+    assert not _is_allowed_domain("anthropic.com.evil.example.net")
+    assert not _is_allowed_domain("notanthropic.com")
+    assert not _is_allowed_domain("users.noreply.github.com.attacker.test")

@@ -1,0 +1,32 @@
+# Dependabot version updates. Security updates are enabled separately in the
+# repository settings and do not need configuring here.
+version: 2
+updates:
+  # The project is managed with uv and pins its dependencies in uv.lock;
+  # the "uv" ecosystem reads that lockfile rather than pyproject.toml alone.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      # British English and lower-case, matching the repository's own style.
+      prefix: "chore"
+    groups:
+      # One pull request for routine bumps rather than five: this is a
+      # small dependency set and separate PRs would be noise.
+      python-dependencies:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Kept even though no workflows are committed yet — CodeQL runs via
+  # GitHub's default setup, which owns its own workflow. If a workflow is
+  # ever added here, its actions are covered from that moment.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore"
