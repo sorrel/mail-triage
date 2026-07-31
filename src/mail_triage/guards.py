@@ -27,7 +27,20 @@ from mail_triage.envelope import MessageRow
 # the whole point being to skip the AppleScript round trip for the obvious
 # cases. Matched as a substring against the lower-cased sender address, so
 # both "no-reply@shop.example" and "Shop <no-reply@shop.example>" match.
-_NO_REPLY_PATTERNS = ("no-reply@", "noreply@", "donotreply@", "notifications@", "bounce@")
+#
+# Written without separators because the local part has its own stripped out
+# before matching: senders spell the same address "no-reply@", "noreply@",
+# "do_not_reply@" and "do.not.reply@" interchangeably, and enumerating the
+# permutations means the one nobody thought of goes unmatched. An
+# underscored "do_not_reply@" was exactly that — the sender adds no
+# List-Unsubscribe either, so a bulk notification was held back as though a
+# person had written it.
+_NO_REPLY_PATTERNS = ("noreply@", "donotreply@", "notifications@", "bounce@")
+
+# Separators stripped from the local part before matching. Only the local
+# part: a domain is not where these addresses vary, and rewriting it could
+# only invent matches that were never there.
+_LOCAL_PART_SEPARATORS = str.maketrans("", "", "-_.")
 
 
 @dataclass(frozen=True)
@@ -42,8 +55,23 @@ class Veto:
 
 
 def _looks_no_reply(sender: str) -> bool:
-    normalised = sender.casefold()
+    normalised = _normalise_local_part(sender.casefold())
     return any(pattern in normalised for pattern in _NO_REPLY_PATTERNS)
+
+
+def _normalise_local_part(sender: str) -> str:
+    """Strip separators from everything before the last ``@``.
+
+    ``rpartition`` rather than ``partition``: a display-name form like
+    "Shop <no-reply@shop.example>" has no other ``@``, but should one appear
+    in a quoted local part the address's own ``@`` is the last of them.
+    Senders with no ``@`` at all are returned unchanged rather than treated
+    as one long local part.
+    """
+    local, at, domain = sender.rpartition("@")
+    if not at:
+        return sender
+    return local.translate(_LOCAL_PART_SEPARATORS) + at + domain
 
 
 def is_bulk(sender: str, headers: dict[str, str] | None) -> bool:
