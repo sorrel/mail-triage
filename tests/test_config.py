@@ -165,8 +165,10 @@ prefix = "imap://AAAAAAAA"
 def test_the_example_config_actually_loads():
     """The documented shape must be a working one, ordering trap included."""
     config = load_config(Path(__file__).resolve().parents[1] / "config.example.toml")
-    assert [s.name for s in config.sources] == ["iCloud", "Gmail"]
+    assert [s.name for s in config.sources] == ["iCloud", "Gmail", "Exchange"]
     assert config.sources[1].ignore == ["[[]Gmail]*"]
+    # A non-imap scheme documented alongside the others.
+    assert config.sources[2].prefix.startswith("ews://")
     assert config.deletion_window_days == 75
 
 
@@ -206,3 +208,31 @@ prefix = "imap://BBBBBBBB"
     config = load_config(path)
     assert config.account_url_prefix == "imap://AAAAAAAA"
     assert config.training_prefixes == ["imap://AAAAAAAA"]
+
+
+def test_a_non_imap_scheme_round_trips(tmp_path):
+    """Exchange accounts are ews://; nothing may assume imap://."""
+    path = _write(tmp_path, """
+filing_account = "iCloud"
+filing_account_prefix = "imap://AAAAAAAA"
+
+[[source]]
+name = "Exchange"
+prefix = "ews://CCCCCCCC"
+inbox = "Inbox"
+trash = "Deleted Items"
+ignore = ["Conversation History"]
+""")
+    config = load_config(path)
+    source = config.source_for("ews://CCCCCCCC")
+    assert source is not None
+    assert (source.name, source.inbox, source.trash) == ("Exchange", "Inbox", "Deleted Items")
+    assert source.ignore == ["Conversation History"]
+
+
+def test_account_prefix_handles_any_scheme():
+    from mail_triage.folders import account_prefix
+
+    assert account_prefix("ews://CCCCCCCC-1111-2222/Inbox") == "ews://CCCCCCCC"
+    assert account_prefix("imap://AAAAAAAA-1111-2222/INBOX") == "imap://AAAAAAAA"
+    assert account_prefix("local://BBBBBBBB-1111-2222/Archive") == "local://BBBBBBBB"
