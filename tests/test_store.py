@@ -12,7 +12,9 @@ import mail_triage.model.store as store_module
 from mail_triage.config import Config
 from mail_triage.corpus import TrainingExample
 from mail_triage.model.sender import SenderModel
-from mail_triage.model.store import TrainedModel, load_model, save_model, train_from_history
+from mail_triage.model.store import (
+    MODEL_VERSION, TrainedModel, load_model, save_model, train_from_history,
+)
 
 
 def test_model_round_trips_to_disk(tmp_path):
@@ -41,8 +43,13 @@ def test_loading_a_wrong_version_model_is_a_clear_error(tmp_path):
     with pytest.raises(ValueError, match="mail-triage learn") as excinfo:
         load_model(path)
     # Confirm the version-mismatch branch, not merely that some ValueError fired.
-    assert "999" in str(excinfo.value)
-    assert "1" in str(excinfo.value)  # expected MODEL_VERSION
+    # Read against MODEL_VERSION rather than a hard-coded number: this line
+    # said `"1" in ...` and went on passing after MODEL_VERSION became 2,
+    # because the message embeds tmp_path and a pytest temp directory almost
+    # always contains a "1" somewhere. It only failed once CI produced a path
+    # that did not. Match the phrase, not a digit loose in the string.
+    assert "version 999" in str(excinfo.value)
+    assert f"expected {MODEL_VERSION}" in str(excinfo.value)
 
 
 def test_loading_a_truncated_json_model_is_a_clear_error(tmp_path):
