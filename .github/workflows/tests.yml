@@ -15,10 +15,13 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     steps:
-      # Pinned to release tags. Pinning to a full commit SHA is stricter
-      # still, and worth doing if this ever handles anything sensitive in CI.
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      # Pinned to full commit SHAs, not tags: a tag is mutable, so
+      # "@v7" is a promise the action's owner can silently rewrite.
+      # Dependabot reads the trailing version comment and keeps both the
+      # SHA and the comment up to date. CodeQL's actions/unpinned-tag
+      # query flags the tag form.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
       - run: uv sync --all-extras --dev
