@@ -239,3 +239,106 @@ def test_maildata_grid_shows_items_by_size():
 
 def test_maildata_grid_is_empty_when_there_is_nothing_to_show():
     assert render_maildata([], exact=False) == ""
+
+
+# --- Layout and colour --------------------------------------------------------
+
+
+def test_tree_guides_connect_children_to_their_parent():
+    usage = account(
+        leaf("", 0, 0, 0, [
+            leaf("Parent", 10 * MB, 0, 0, [
+                leaf("First", 5 * MB, 0, 0),
+                leaf("Last", 4 * MB, 0, 0),
+            ]),
+        ])
+    )
+    lines = plain(render_account(usage, min_size=0, exact=False)).splitlines()
+    first = next(line for line in lines if "First" in line)
+    last = next(line for line in lines if "Last" in line)
+    assert "├" in first
+    assert "└" in last, "the final child should close the branch"
+
+
+def test_a_grid_is_ruled_above_its_total():
+    usage = account(leaf("", 0, 0, 0, [leaf("Folder", 10 * MB, 0, 1)]))
+    output = plain(render_account(usage, min_size=0, exact=False))
+    assert "─" in output
+
+
+def test_every_row_is_the_same_width():
+    """Rules, guides and headings must all land on the same grid."""
+    from mail_triage.review import display_width
+
+    usage = account(
+        leaf("", 0, 0, 0, [
+            leaf("Parent", 10 * MB, 5 * MB, 3, [leaf("Child", 2 * MB, MB, 1)]),
+            leaf("Tiny", 10, 10, 1),
+        ])
+    )
+    lines = plain(render_account(usage, min_size=MB, exact=False)).splitlines()
+    widths = {display_width(line) for line in lines[1:]}
+    assert len(widths) == 1, f"ragged rows: {widths}"
+
+
+def test_the_disk_column_ramps_from_dim_to_bold():
+    """Three tiers, so the eye finds the big folders without reading numbers."""
+    usage = account(
+        leaf("", 0, 0, 0, [
+            leaf("Dominant", 80 * MB, 0, 1),
+            leaf("Middling", 12 * MB, 0, 1),
+            leaf("Trifling", 10 * 1024, 0, 1),
+        ])
+    )
+    lines = render_account(usage, min_size=0, exact=False).splitlines()
+    dominant = next(line for line in lines if "Dominant" in line)
+    middling = next(line for line in lines if "Middling" in line)
+    trifling = next(line for line in lines if "Trifling" in line)
+    assert "\x1b[33m" in dominant and "\x1b[1m" in dominant
+    assert "\x1b[33m" in middling and "\x1b[1m" not in middling
+    assert "\x1b[2m" in trifling
+
+
+def test_section_titles_are_coloured():
+    usage = account(leaf("", 0, 0, 0, [leaf("Folder", 10 * MB, 0, 1)]))
+    assert "\x1b[36m" in render_account(usage, min_size=0, exact=False)
+
+
+def test_the_dash_for_a_missing_figure_is_dimmed():
+    usage = account(leaf("", None, 0, 0, [leaf("Folder", None, MB, 1)]), on_disk=False)
+    output = render_account(usage, min_size=0, exact=False)
+    dashed = next(line for line in output.splitlines() if "—" in line)
+    assert "\x1b[2m" in dashed
+
+
+def test_a_collapse_line_is_weighted_like_any_other_row():
+    """It stands for real bytes, so it must colour like the rows it replaced."""
+    usage = account(
+        leaf("", 0, 0, 0, [
+            leaf("Kept", 60 * MB, 0, 1),
+            *[leaf(f"S{n}", 4 * MB, 0, 1) for n in range(10)],
+        ])
+    )
+    output = render_account(usage, min_size=10 * MB, exact=False)
+    collapsed = next(line for line in output.splitlines() if "smaller folders" in line)
+    assert "\x1b[33m" in collapsed, "40 MB of 100 MB should not be dimmed"
+
+
+def test_total_rows_are_not_dimmed():
+    usage = account(leaf("", 0, 0, 0, [leaf("Folder", 10 * MB, 0, 1)]))
+    total = next(
+        line for line in render_account(usage, min_size=0, exact=False).splitlines()
+        if "All folders" in line
+    )
+    assert not re.search(r"\x1b\[2m\s*10\.0 MB", total)
+
+
+def test_the_tree_is_closed_exactly_once():
+    """Two closing guides at one level reads as two separate trees."""
+    usage = account(
+        leaf("", 4096, 0, 0, [leaf("A", 10 * MB, 0, 1), leaf("B", 9 * MB, 0, 1)])
+    )
+    lines = plain(render_account(usage, min_size=0, exact=False)).splitlines()
+    top_level_closers = [line for line in lines if line.startswith("└─ ")]
+    assert len(top_level_closers) == 1
+    assert "account files" in top_level_closers[0]

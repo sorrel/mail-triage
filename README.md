@@ -152,9 +152,13 @@ never a zero — "not kept here" is not "empty".
 
 Folders below `--min-size` (2 MB by default) collapse into a single
 `N smaller folders` line that carries their totals, so the visible rows always
-add up to the account's total. The largest rows are highlighted, judged as a
-share of the account rather than by a fixed cut-off, so the colour means the
-same thing in a small account as in a large one.
+add up to the account's total.
+
+The disk column is weighted in three tiers — bold yellow for a folder worth
+acting on, plain yellow for one worth noticing, dim for the rest — judged as a
+share of the grid's total rather than by a fixed cut-off, so the colour means
+the same thing in a small account as in a large one. Colours are chosen for a
+dark terminal, and are dropped automatically when the output is piped.
 
 `MailData` holds no mail — it is the envelope database, the search and
 junk-filter indexes, and a cache of remote images. It is listed anyway, so the
