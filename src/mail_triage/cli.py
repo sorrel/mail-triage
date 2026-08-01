@@ -12,6 +12,7 @@ from mail_triage.accounts import account_names, resolve_account_name, truncate_n
 from mail_triage.asking import (
     ask_all, build_billing_senders, build_yearly_counts, rank_uncertain,
 )
+from mail_triage.cli_help import ColouredGroup
 from mail_triage.config import load_config
 from mail_triage.deletion import PerAccountDeletionIndex, build_deletion_index
 from mail_triage.envelope import DEFAULT_DB_PATH, EnvelopeReader, MessageRow, snapshot_database
@@ -31,7 +32,7 @@ from mail_triage.size_report import (
 from mail_triage.sizes import build_account_usage, maildata_usage
 
 
-@click.group()
+@click.group(cls=ColouredGroup)
 @click.version_option()
 def cli() -> None:
     """Local-first triage for Apple Mail."""
