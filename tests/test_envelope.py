@@ -120,3 +120,29 @@ def test_inbox_messages_does_not_duplicate_a_message_in_both(tmp_path):
     found = list(reader.inbox_messages("imap://AAAAAAAA/INBOX"))
     reader.close()
     assert [r.rowid for r in found] == [1]
+
+
+def test_mailbox_sizes_totals_bytes_and_counts_per_mailbox(tmp_path):
+    """The size report's raw material: bytes and counts, grouped per mailbox."""
+    from tests.conftest import build_fixture_db
+
+    db = tmp_path / "Envelope Index"
+    build_fixture_db(
+        db,
+        [
+            {"sender": "a@example.com", "subject": "one", "date_sent": 1,
+             "mailbox_url": "imap://AAAAAAAA/Parent", "read": 0, "size": 100},
+            {"sender": "b@example.com", "subject": "two", "date_sent": 2,
+             "mailbox_url": "imap://AAAAAAAA/Parent", "read": 0, "size": 250},
+            {"sender": "c@example.com", "subject": "three", "date_sent": 3,
+             "mailbox_url": "imap://AAAAAAAA/Parent/Child", "read": 0, "size": 40},
+        ],
+    )
+    reader = EnvelopeReader(db)
+    try:
+        assert {url: (count, total) for url, count, total in reader.mailbox_sizes()} == {
+            "imap://AAAAAAAA/Parent": (2, 350),
+            "imap://AAAAAAAA/Parent/Child": (1, 40),
+        }
+    finally:
+        reader.close()

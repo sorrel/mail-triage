@@ -50,6 +50,8 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `execute.py` | The only module that moves mail |
 | `deletion.py` | Deletion as negative evidence, counted per account |
 | `journal.py` | Run journal and undo |
+| `sizes.py` | Measure disk and envelope size per mailbox |
+| `size_report.py` | Render the size grids |
 | `mail_app.py` | AppleScript bridge, plus `FakeMail` for tests |
 
 ### Several accounts
@@ -94,6 +96,15 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   *appearing* to work, because it also catches `[Gmail]/All Mail` via the
   `a` of `All Mail`. Write `[[]Gmail]*`. The failure mode is a silent hole
   in the training corpus, not an unexcluded All Mail.
+- **The database's folder path and the on-disk `.mbox` tree correspond
+  exactly.** A mailbox URL path of `Parent/Child` is
+  `V10/<account-uuid>/Parent.mbox/Child.mbox` on disk, so the two can be
+  joined on the folder path alone. When summing a folder's own bytes, attribute
+  each file to its *nearest* `.mbox` ancestor — otherwise a parent absorbs its
+  children and every roll-up double-counts.
+- **Size on disk means `st_blocks * 512`, not `st_size`.** A mail store is tens
+  of thousands of small `.emlx` files; apparent size understates real
+  consumption badly once block rounding is counted. `du` agrees with the former.
 - **In TOML, every top-level key must precede the first `[[source]]` table.**
   Anything after one is parsed as part of it. This broke the first draft of
   `config.example.toml`; `load_config` now says so by name when it happens.

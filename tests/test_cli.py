@@ -908,3 +908,83 @@ def test_the_exchange_row_names_its_own_account(tmp_path, monkeypatch):
     row = next(line for line in result.output.splitlines() if "Exchange message" in line)
     assert row.startswith("Exchange")
     assert "Projects" in row
+
+
+# --- The size command ---------------------------------------------------------
+
+
+def _size_store(tmp_path):
+    """A miniature V10 tree: one account with one mailbox, plus MailData."""
+    from tests.conftest import build_fixture_db
+
+    store = tmp_path / "V10"
+    data = store / "AAAAAAAA" / "Parent.mbox" / "UUID"
+    data.mkdir(parents=True)
+    (data / "1.emlx").write_bytes(b"x" * 4096)
+    db = store / "MailData" / "Envelope Index"
+    db.parent.mkdir(parents=True)
+    build_fixture_db(
+        db,
+        [
+            {"sender": "a@example.com", "subject": "one", "date_sent": 1,
+             "mailbox_url": "imap://AAAAAAAA/Parent", "read": 0, "size": 4096},
+        ],
+    )
+    return db
+
+
+def test_size_command_renders_grids(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from mail_triage import cli as cli_module
+
+    db = _size_store(tmp_path)
+    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db)
+    monkeypatch.setattr(cli_module, "account_names", lambda: {})
+
+    result = CliRunner().invoke(cli_module.cli, ["size", "--min-size", "0"])
+    assert result.exit_code == 0, result.output
+    assert "Parent" in result.output
+    assert "All accounts" in result.output
+    assert "MailData" in result.output
+
+
+def test_size_command_rejects_a_bad_min_size(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from mail_triage import cli as cli_module
+
+    result = CliRunner().invoke(cli_module.cli, ["size", "--min-size", "huge"])
+    assert result.exit_code != 0
+    assert "min-size" in result.output.lower()
+
+
+def test_size_command_filters_by_account(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from mail_triage import cli as cli_module
+
+    db = _size_store(tmp_path)
+    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db)
+    monkeypatch.setattr(cli_module, "account_names", lambda: {})
+
+    result = CliRunner().invoke(
+        cli_module.cli, ["size", "--min-size", "0", "--account", "nosuchaccount"]
+    )
+    assert result.exit_code != 0
+    assert "no account" in result.output.lower()
+
+
+def test_size_command_never_writes_to_the_real_database(tmp_path, monkeypatch):
+    """The command must read a snapshot, never open the live file writable."""
+    from click.testing import CliRunner
+
+    from mail_triage import cli as cli_module
+
+    db = _size_store(tmp_path)
+    before = db.read_bytes()
+    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db)
+    monkeypatch.setattr(cli_module, "account_names", lambda: {})
+
+    CliRunner().invoke(cli_module.cli, ["size", "--min-size", "0"])
+    assert db.read_bytes() == before
