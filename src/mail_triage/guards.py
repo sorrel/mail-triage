@@ -42,6 +42,21 @@ _NO_REPLY_PATTERNS = ("noreply@", "donotreply@", "notifications@", "bounce@")
 # only invent matches that were never there.
 _LOCAL_PART_SEPARATORS = str.maketrans("", "", "-_.")
 
+# The same idea applied to a display name, where spaces are a separator too:
+# "Do Not Reply <mailer@service.example>" says plainly that nobody reads
+# replies whilst the address itself gives no clue. Matched without the "@"
+# anchor, since a display name has no address in it.
+_DISPLAY_NAME_SEPARATORS = str.maketrans("", "", "-_. ")
+_NO_REPLY_DISPLAY_NAMES = ("noreply", "donotreply")
+
+# Headers that declare a message automated. ``Precedence`` is the old
+# convention and ``Auto-Submitted`` (RFC 3834) the standardised one; both
+# appear on service notifications that carry no List-Unsubscribe, because
+# there is nothing to unsubscribe *from* — a sign-in alert is not a
+# newsletter. Without these such a message has no bulk evidence at all and
+# is held back as though a person had written it.
+_BULK_PRECEDENCE_VALUES = ("bulk", "list", "junk")
+
 
 @dataclass(frozen=True)
 class Veto:
@@ -56,7 +71,49 @@ class Veto:
 
 def _looks_no_reply(sender: str) -> bool:
     normalised = _normalise_local_part(sender.casefold())
-    return any(pattern in normalised for pattern in _NO_REPLY_PATTERNS)
+    if any(pattern in normalised for pattern in _NO_REPLY_PATTERNS):
+        return True
+    return _display_name_says_no_reply(sender)
+
+
+def _display_name_says_no_reply(sender: str) -> bool:
+    """Whether the part before ``<`` names the sender as a no-reply address.
+
+    Only applied when there *is* a display name: without the angle brackets
+    the whole string is an address, already covered above, and matching the
+    unanchored words against it would fire on a local part like
+    "noreplyneeded" in a way the ``@``-anchored patterns deliberately do not.
+    """
+    display, bracket, _ = sender.casefold().partition("<")
+    if not bracket:
+        return False
+    squashed = display.translate(_DISPLAY_NAME_SEPARATORS)
+    return any(name in squashed for name in _NO_REPLY_DISPLAY_NAMES)
+
+
+def _header(headers: dict[str, str], name: str) -> str | None:
+    """Case-insensitive header lookup.
+
+    Header names are case-insensitive by RFC 5322 and senders genuinely vary
+    ("List-unsubscribe" is common), so an exact-match lookup would miss a
+    header that is plainly present.
+    """
+    wanted = name.casefold()
+    for key, value in headers.items():
+        if key.casefold() == wanted:
+            return value
+    return None
+
+
+def _headers_say_automated(headers: dict[str, str]) -> bool:
+    """Whether the headers declare the message machine-generated."""
+    precedence = _header(headers, "Precedence")
+    if precedence is not None and precedence.strip().casefold() in _BULK_PRECEDENCE_VALUES:
+        return True
+    auto = _header(headers, "Auto-Submitted")
+    # RFC 3834: "no" is the explicit way of saying a human sent it, so the
+    # header's presence alone must not count — that would invert its meaning.
+    return auto is not None and auto.strip().casefold() != "no"
 
 
 def _normalise_local_part(sender: str) -> str:
@@ -89,7 +146,9 @@ def is_bulk(sender: str, headers: dict[str, str] | None) -> bool:
         return True
     if headers is None:
         return False
-    return "List-Unsubscribe" in headers
+    if _header(headers, "List-Unsubscribe") is not None:
+        return True
+    return _headers_say_automated(headers)
 
 
 def needs_attention(message: MessageRow, headers: dict[str, str] | None) -> Veto | None:

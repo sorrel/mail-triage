@@ -160,7 +160,7 @@ def _categorise(
     return placed, no_history, missing_folder, inconsistent, vetoed
 
 
-def summarise(proposals: list[Proposal]) -> str:
+def summarise(proposals: list[Proposal], accounts: dict[str, str] | None = None) -> str:
     """Describe the outcome, giving equal weight to what stays in the inbox.
 
     For most real inboxes the majority of messages stay put — either the
@@ -173,8 +173,24 @@ def summarise(proposals: list[Proposal]) -> str:
     some at very high confidence, so the user needs to see exactly which
     ones were held back and why — "you flagged this", "looks personal, may
     need a reply" — in order to trust that the veto is doing the right thing.
+
+    ``accounts`` maps account prefix to the name Mail shows, and follows the
+    same rule as ``render_table``: the name is shown only when more than one
+    account is being triaged. Without it a whole account's inbox could be
+    held back and read as never having been scanned at all, which is exactly
+    how the Exchange source first appeared to be broken when it was not.
     """
     placed, no_history, missing_folder, inconsistent, vetoed = _categorise(proposals)
+    show_account = accounts is not None and len(accounts) > 1
+
+    def held_line(item: Proposal) -> str:
+        name = ""
+        if show_account:
+            # "?" rather than a guess, as in ``render_table``: a message from
+            # an unconfigured account should look wrong, not plausible.
+            name = accounts.get(account_prefix(item.message.mailbox_url), "?") + " — "
+        return f"    {name}{item.message.subject} — {item.veto}"
+
     total = len(proposals)
     unplaced_count = total - len(placed)
     lines = [f"{len(placed)} of {total} would be filed; {unplaced_count} staying in the inbox."]
@@ -192,13 +208,13 @@ def summarise(proposals: list[Proposal]) -> str:
     if bills:
         lines.append(f"  {len(bills)} need dealing with — these look like bills:")
         for item in bills:
-            lines.append(f"    {item.message.subject} — {item.veto}")
+            lines.append(held_line(item))
     if other_vetoes:
         lines.append(
             f"  {len(other_vetoes)} staying in the inbox despite a filing proposal:"
         )
         for item in other_vetoes:
-            lines.append(f"    {item.message.subject} — {item.veto}")
+            lines.append(held_line(item))
     if no_history:
         lines.append(
             f"  {len(no_history)} staying in the inbox: no filing history for this sender."
@@ -345,6 +361,77 @@ def review_unplaced(proposals: list[Proposal], prompt: Callable[[str], str]) -> 
         answers[index] = (
             Decision(item, accepted=True, action="delete") if reply == "d" else None
         )
+        index += 1
+        if index == len(candidates) and _confirm_or_go_back(
+            sum(answer is not None for answer in answers), "one", prompt
+        ):
+            index -= 1
+            answers[index] = None
+    return [answer for answer in answers if answer is not None]
+
+
+def held_back(proposals: list[Proposal]) -> list[Proposal]:
+    """Messages the attention guard held back, and only those.
+
+    Deliberately narrower than "everything vetoed". A bill has its own
+    handling — the point of that veto is that the invoice gets *dealt with*,
+    and quietly filing it here would be the failure it exists to prevent. A
+    deletion veto already has an answer in ``review_unplaced``, where binning
+    is the natural verb. What is left over is the mail this loop was written
+    for: flagged, or apparently awaiting a reply.
+    """
+    return [item for item in proposals if item.veto_kind == "attention"]
+
+
+def review_held(proposals: list[Proposal], prompt: Callable[[str], str]) -> list[Decision]:
+    """Step through mail the attention guard held back, one message at a time.
+
+    The guard is right to hold this mail, and nothing here weakens it: the
+    offer is declined by default, there is no batch answer, and every message
+    is shown with the reason it was held and the destination the veto
+    overrode. This is the override made deliberate rather than absent — the
+    summary used to name these messages and give no way to act on them, so
+    the same mail was reported run after run.
+
+    Leaving is the default and records no decision, so a stray keystroke
+    costs nothing. Filing requires ``held_folder``: a message the classifier
+    never had a destination for has nothing to accept, and inventing one
+    would be worse than declining.
+    """
+    candidates = held_back(proposals)
+    if not candidates:
+        return []
+    answer = prompt(
+        f"\n{len(candidates)} held back as possibly needing a reply. "
+        "Go through them? [y/N] "
+    ).strip().casefold()
+    if answer != "y":
+        return []
+    answers: list[Decision | None] = [None] * len(candidates)
+    index = 0
+    while index < len(candidates):
+        item = candidates[index]
+        destination = item.held_folder or "nowhere — no folder was predicted"
+        reply = prompt(
+            f"{_clip(item.message.subject, SUBJECT_WIDTH)} — {_clip(item.veto or '', 44)}\n"
+            f"  file → {destination}? [f]ile / [d]elete / [l]eave / [b]ack / [q]uit "
+        ).strip().casefold()
+        if reply == "q":
+            break
+        if reply == "b":
+            # Nothing has moved yet, so going back is just discarding an answer.
+            if index > 0:
+                index -= 1
+                answers[index] = None
+            continue
+        if reply == "f" and item.held_folder is not None:
+            answers[index] = Decision(
+                item, accepted=True, override_folder=item.held_folder, action="file"
+            )
+        elif reply == "d":
+            answers[index] = Decision(item, accepted=True, action="delete")
+        else:
+            answers[index] = None
         index += 1
         if index == len(candidates) and _confirm_or_go_back(
             sum(answer is not None for answer in answers), "one", prompt

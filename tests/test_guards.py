@@ -48,6 +48,30 @@ def test_list_unsubscribe_header_marks_bulk():
     assert is_bulk("newsletter@shop.example", {"List-Unsubscribe": "<mailto:x@shop.example>"}) is True
 
 
+def test_precedence_bulk_header_marks_bulk():
+    # A sign-in alert or service notification often carries neither a
+    # no-reply address nor List-Unsubscribe — there is nothing to
+    # unsubscribe from — but does declare itself automated.
+    assert is_bulk("gitlab@service.example", {"Precedence": "bulk"}) is True
+    assert is_bulk("gitlab@service.example", {"Precedence": "list"}) is True
+
+
+def test_auto_submitted_header_marks_bulk():
+    assert is_bulk("alerts@service.example", {"Auto-Submitted": "auto-generated"}) is True
+
+
+def test_auto_submitted_none_does_not_mark_bulk():
+    # RFC 3834: "auto-submitted: no" is the explicit way of saying a human
+    # sent it. Treating the header's mere presence as bulk would invert it.
+    assert is_bulk("someone@work.example", {"Auto-Submitted": "no"}) is False
+
+
+def test_no_reply_display_name_marks_bulk():
+    # The address can be ordinary whilst the display name says plainly that
+    # nobody reads replies.
+    assert is_bulk("Do Not Reply <mailer@service.example>", None) is True
+
+
 def test_ordinary_address_with_no_headers_is_not_proven_bulk():
     # Absence of a no-reply pattern does not prove a human wrote it — the
     # header check is required before calling anything else bulk.

@@ -461,6 +461,23 @@ def test_a_message_needing_a_reply_records_an_attention_veto(tmp_path):
     assert classifier.classify(message(sender="someone@work.example")).veto_kind == "attention"
 
 
+def test_a_veto_remembers_the_folder_it_overrode(tmp_path):
+    # ``folder`` stays None so nothing downstream can file a vetoed message
+    # by accident, but the destination the veto overrode is what the held-mail
+    # review has to offer — without it there is nothing to say yes to.
+    model = make_model([example("orders@shop.example", "orders") for _ in range(10)])
+    classifier = Classifier(model, config(tmp_path), available_folders=["Orders"])
+    proposal = classifier.classify(message(flagged=True))
+    assert proposal.folder is None
+    assert proposal.held_folder == "Orders"
+
+
+def test_a_message_with_no_folder_to_begin_with_holds_no_folder(tmp_path):
+    model = make_model([])
+    classifier = Classifier(model, config(tmp_path), available_folders=["Orders"])
+    assert classifier.classify(message(flagged=True)).held_folder is None
+
+
 def test_an_only_deletes_sender_records_a_deletion_veto(tmp_path):
     model = make_model([example("news@bulletin.example", "orders") for _ in range(10)])
     classifier = Classifier(

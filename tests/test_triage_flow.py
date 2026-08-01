@@ -11,7 +11,7 @@ from mail_triage.execute import execute
 from mail_triage.journal import Journal, new_run_id, undo_run
 from mail_triage.mail_app import FakeMail, MailNotRunningError
 from mail_triage.model.classify import Proposal
-from mail_triage.review import Decision
+from mail_triage.review import Decision, review_held
 
 KEYS = {1: "<one@example.com>", 2: "<two@example.com>"}
 
@@ -343,3 +343,41 @@ def test_a_message_from_an_unconfigured_account_is_not_moved(tmp_path):
     moved, failed = execute([stray], mail, journal, config)
     assert (moved, failed) == (0, 1)
     assert mail.folder_message_ids("Orders", account="iCloud") == []
+
+
+# --- a decision from the held-mail review reaches the mailbox -------------
+#
+# The held loop is the one place that can file a message whose ``folder`` is
+# None, and it does so by overriding with ``held_folder``. That override has
+# to survive all the way to the move, or the loop would collect answers that
+# quietly do nothing — the failure mode being indistinguishable, from the
+# user's side, from the guard holding the mail back in the first place.
+
+def test_a_held_message_filed_by_override_is_actually_moved(tmp_path):
+    journal, _ = started_journal(make_config(tmp_path))
+    mail = FakeMail(inbox=[1], mailboxes=["Orders"], keys=KEYS)
+    message = MessageRow(rowid=1, sender="a@b.example", subject="s",
+                         date_sent=1, mailbox_url="imap://A/INBOX", read=False)
+    held = Proposal(message, None, 0.9, "sender seen often", "sender",
+                    veto="looks personal, may need a reply", veto_kind="attention",
+                    held_folder="Orders")
+    replies = iter(["y", "f", ""])
+    decisions = review_held([held], lambda text: next(replies))
+    moved, failed = execute(decisions, mail, journal, make_config(tmp_path))
+    assert (moved, failed) == (1, 0)
+    assert mail.moved[0][0] == 1
+    assert mail.moved[0][1] == "Orders"
+
+
+def test_leaving_held_mail_alone_moves_nothing(tmp_path):
+    journal, _ = started_journal(make_config(tmp_path))
+    mail = FakeMail(inbox=[1], mailboxes=["Orders"], keys=KEYS)
+    message = MessageRow(rowid=1, sender="a@b.example", subject="s",
+                         date_sent=1, mailbox_url="imap://A/INBOX", read=False)
+    held = Proposal(message, None, 0.9, "sender seen often", "sender",
+                    veto="looks personal, may need a reply", veto_kind="attention",
+                    held_folder="Orders")
+    replies = iter(["y", "l", ""])
+    decisions = review_held([held], lambda text: next(replies))
+    execute(decisions, mail, journal, make_config(tmp_path))
+    assert mail.moved == []
