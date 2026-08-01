@@ -21,7 +21,9 @@ from mail_triage.journal import Journal, list_runs, new_run_id, undo_run
 from mail_triage.mail_app import AppleScriptMail, MailError, MailNotRunningError
 from mail_triage.model.classify import Classifier
 from mail_triage.model.store import load_model, save_model, train_from_history
-from mail_triage.review import render_table, review, review_unplaced, summarise
+from mail_triage.review import (
+    render_table, review, review_held, review_unplaced, summarise,
+)
 from mail_triage.rules import RulesError, forget_rule, load_rules
 
 
@@ -333,7 +335,7 @@ def triage(dry_run: bool, limit: int, ask: bool, source_names: tuple[str, ...]) 
 
     click.echo(render_table(proposals, {s.prefix: s.name for s in sources}))
     click.echo()
-    click.echo(summarise(proposals))
+    click.echo(summarise(proposals, {s.prefix: s.name for s in sources}))
 
     if dry_run:
         click.echo("\nDry run — nothing was moved.")
@@ -345,13 +347,21 @@ def triage(dry_run: bool, limit: int, ask: bool, source_names: tuple[str, ...]) 
     if limit:
         placed = [item for item in proposals if item.folder is not None]
         if len(placed) > limit:
-            held_back = len(placed) - limit
+            not_offered = len(placed) - limit
             proposals = placed[:limit]
             click.echo(f"\nLimited to {limit} of {len(placed)} filable messages "
-                       f"({held_back} not offered this run).")
+                       f"({not_offered} not offered this run).")
 
     decisions = review(proposals, lambda text: click.prompt(text, default="q", show_default=False))
-    # Second pass over what stayed put. Without it the largest group in a
+    # Then the mail the attention guard held back. Offered before the binning
+    # pass because it is the more consequential of the two: these are
+    # messages the classifier was confident about and something else
+    # overrode, which is precisely what a person should see whilst still
+    # paying attention.
+    decisions += review_held(
+        proposals, lambda text: click.prompt(text, default="l", show_default=False)
+    )
+    # Last, a pass over what stayed put. Without it the largest group in a
     # typical run — mail the classifier could not place — has no answer
     # available at all, run after run.
     decisions += review_unplaced(

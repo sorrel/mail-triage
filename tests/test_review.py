@@ -9,7 +9,8 @@ from __future__ import annotations
 from mail_triage.envelope import MessageRow
 from mail_triage.model.classify import Proposal
 from mail_triage.review import (
-    Decision, display_width, render_table, review, review_unplaced, summarise,
+    Decision, display_width, held_back, render_table, review, review_held,
+    review_unplaced, summarise,
 )
 
 
@@ -68,6 +69,32 @@ def test_summary_shows_the_vetoed_subject_and_reason_together():
     ])
     assert "Contract renewal" in text
     assert "looks personal, may need a reply" in text
+
+
+def test_summary_names_the_account_on_held_lines_when_several_are_triaged():
+    # The proposals table carries an Account column; the held-back list did
+    # not, so a whole account's inbox could be held and read as ignored.
+    text = summarise(
+        [
+            proposal(folder=None, rowid=1, subject="Assessor availability",
+                     prefix="ews://C", veto="looks personal, may need a reply"),
+            proposal(folder=None, rowid=2, subject="Your order", prefix="imap://A",
+                     veto="you flagged this"),
+        ],
+        accounts={"imap://A": "iCloud", "ews://C": "Exchange"},
+    )
+    assert "Exchange — Assessor availability" in text
+    assert "iCloud — Your order" in text
+
+
+def test_summary_omits_the_account_when_only_one_is_triaged():
+    # One source repeats the same name on every line and buys nothing.
+    text = summarise(
+        [proposal(folder=None, subject="Your order", veto="you flagged this")],
+        accounts={"imap://A": "iCloud"},
+    )
+    assert "iCloud —" not in text
+    assert "Your order — you flagged this" in text
 
 
 def test_summary_does_not_double_count_a_veto_as_no_history():
@@ -606,3 +633,117 @@ def test_account_column_is_padded_by_display_width():
         ACCOUNTS,
     ).splitlines()
     assert len({display_width(line) for line in lines}) == 1
+
+
+# --- reviewing mail the attention guard held back --------------------------
+#
+# The guard is right to hold this mail: it is flagged, or it looks like a
+# person expecting a reply. But "held back" was previously the end of the
+# story — the summary named the messages and offered nothing to do about
+# them, so the same mail was reported run after run with no way to clear it
+# short of filing by hand. This loop is the deliberate override: opt-in,
+# one message at a time, never a batch answer, with the destination the veto
+# overrode shown so there is something concrete to accept.
+
+def held(subject="Assessor availability", veto="looks personal, may need a reply",
+         veto_kind="attention", held_folder="Colleagues/Enquiries", rowid=1):
+    message = MessageRow(
+        rowid=rowid, sender="someone@work.example", subject=subject,
+        date_sent=1_700_000_000, mailbox_url="imap://A/INBOX", read=False,
+    )
+    return Proposal(message, None, 0.91, "sender seen often", "sender",
+                    veto=veto, veto_kind=veto_kind, held_folder=held_folder)
+
+
+def test_no_held_mail_means_no_question_at_all():
+    prompts = []
+
+    def prompt(text):
+        prompts.append(text)
+        return "y"
+
+    assert review_held([placed("Orders")], prompt) == []
+    assert prompts == []
+
+
+def test_declining_the_held_offer_records_nothing():
+    assert review_held([held()], lambda text: "n") == []
+
+
+def test_the_offer_is_declined_by_default():
+    # Enter must not start the loop: the guard's whole purpose is that this
+    # mail is not dealt with casually.
+    assert review_held([held()], lambda text: "") == []
+
+
+def test_filing_held_mail_uses_the_folder_the_veto_overrode():
+    replies = iter(["y", "f", ""])
+    decisions = review_held([held()], lambda text: next(replies))
+    assert len(decisions) == 1
+    assert decisions[0].accepted is True
+    assert decisions[0].folder == "Colleagues/Enquiries"
+    assert decisions[0].is_delete is False
+
+
+def test_leaving_held_mail_records_no_decision():
+    replies = iter(["y", "l", ""])
+    assert review_held([held()], lambda text: next(replies)) == []
+
+
+def test_held_mail_can_be_binned_one_at_a_time():
+    replies = iter(["y", "d", ""])
+    decisions = review_held([held()], lambda text: next(replies))
+    assert len(decisions) == 1
+    assert decisions[0].is_delete is True
+
+
+def test_held_mail_with_no_folder_cannot_be_filed_only_binned():
+    # A flagged message the classifier never had a destination for: filing it
+    # would have nowhere to go, so "f" must not invent one.
+    replies = iter(["y", "f", ""])
+    decisions = review_held([held(held_folder=None)], lambda text: next(replies))
+    assert decisions == []
+
+
+def test_the_prompt_names_the_destination_and_the_reason():
+    prompts = []
+
+    def prompt(text):
+        prompts.append(text)
+        return "y" if len(prompts) == 1 else "l"
+
+    review_held([held()], prompt)
+    assert "Colleagues/Enquiries" in prompts[1]
+    assert "looks personal, may need a reply" in prompts[1]
+
+
+def test_going_back_discards_the_previous_answer():
+    # First is answered "f", then "b" reopens it and "l" leaves it alone;
+    # the second is filed. Only the second survives.
+    replies = iter(["y", "f", "b", "l", "f", ""])
+    decisions = review_held(
+        [held(rowid=1), held(rowid=2, subject="Second")], lambda text: next(replies)
+    )
+    assert [d.proposal.message.rowid for d in decisions] == [2]
+
+
+def test_quitting_stops_without_touching_the_rest():
+    replies = iter(["y", "q"])
+    assert review_held(
+        [held(rowid=1), held(rowid=2, subject="Second")], lambda text: next(replies)
+    ) == []
+
+
+def test_only_attention_vetoes_are_offered():
+    # A bill has its own handling and must not be quietly filed away here;
+    # a deletion veto already belongs to the binning loop.
+    invoice = held(veto="this looks like a bill", veto_kind="invoice")
+    deletion = held(veto="you keep binning this sender", veto_kind="deletion")
+    prompts = []
+
+    def prompt(text):
+        prompts.append(text)
+        return "n"
+
+    review_held([invoice, deletion], prompt)
+    assert prompts == []

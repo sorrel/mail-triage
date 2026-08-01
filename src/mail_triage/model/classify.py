@@ -45,6 +45,11 @@ class Proposal:
     # Only a bin rule produces "delete", and any veto resets it to "file" —
     # a vetoed message is acted on in no way at all.
     action: str = "file"
+    # The destination a veto overrode, kept for display and for the held-mail
+    # review to offer. Deliberately *not* ``folder``, which stays None: no
+    # existing code path can act on a vetoed message by accident, and the one
+    # loop that may file it must reach for this field on purpose.
+    held_folder: str | None = None
 
     @property
     def is_actionable(self) -> bool:
@@ -283,5 +288,5 @@ class Classifier:
     def _vetoed(proposal: Proposal, reason: str, kind: str) -> Proposal:
         return Proposal(
             proposal.message, None, proposal.confidence, proposal.reason, proposal.stage,
-            veto=reason, veto_kind=kind,
+            veto=reason, veto_kind=kind, held_folder=proposal.folder,
         )
