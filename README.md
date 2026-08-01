@@ -115,6 +115,10 @@ reverse it.
 | Command | What it does |
 |---|---|
 | `accounts` | List mail accounts with mailbox and message counts |
+| `size` | Show how much space each mail folder occupies |
+| `size --min-size 0` | Show every folder, however small |
+| `size --account NAME` | Report one account only |
+| `size --bytes` | Exact byte counts instead of rounded sizes |
 | `learn` | Build the classifier from your filing history |
 | `triage` | Classify every configured inbox, then file what you approve |
 | `triage --dry-run` | Report only; move nothing |
@@ -126,6 +130,38 @@ reverse it.
 | `explain <sender>` | Show why that sender's mail goes where it does |
 | `runs` | List runs that can be undone |
 | `undo [run-id]` | Reverse a run, defaulting to the most recent |
+
+## Where the space has gone
+
+`mail-triage size` reports what the mail store occupies, as a grid per
+account: an all-accounts summary, then each account's folders as an indented
+tree with roll-up totals, then Mail's own `MailData` directory.
+
+Each folder carries two figures, because they answer different questions.
+
+- **In Mail** is the size of every message Mail knows about, taken from the
+  envelope database. It covers accounts whose bodies were never downloaded.
+- **On disk** is what the folder actually costs this Mac, measured the way
+  `du` measures it — allocated blocks, not apparent size, which matters when a
+  mailbox is tens of thousands of small files.
+
+Where the two differ markedly, that is a fact about the account rather than an
+error: mail held on the server and not cached locally shows a large "In Mail"
+against a small "On disk". An account with no local store at all shows a dash,
+never a zero — "not kept here" is not "empty".
+
+Folders below `--min-size` (2 MB by default) collapse into a single
+`N smaller folders` line that carries their totals, so the visible rows always
+add up to the account's total. The largest rows are highlighted, judged as a
+share of the account rather than by a fixed cut-off, so the colour means the
+same thing in a small account as in a large one.
+
+`MailData` holds no mail — it is the envelope database, the search and
+junk-filter indexes, and a cache of remote images. It is listed anyway, so the
+accounts sum to what the store really occupies.
+
+The command is read-only: it copies the database, stats files, and touches
+neither Mail nor a single message.
 
 ## Several accounts
 

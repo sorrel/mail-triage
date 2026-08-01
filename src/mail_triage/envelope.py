@@ -148,6 +148,24 @@ class EnvelopeReader:
             reverse=True,
         )
 
+    def mailbox_sizes(self) -> list[tuple[str, int, int]]:
+        """Return (mailbox_url, message_count, total_size) for each mailbox.
+
+        The plain mailbox join, deliberately — not ``inbox_messages``. A Gmail
+        message is *stored* once, under All Mail, whatever labels it carries,
+        so unioning the labels here would count those bytes twice. Labels
+        answer "what is in this inbox"; this answers "what does this mailbox
+        hold", and for sizing the latter is the honest question.
+        """
+        return [
+            (url, count, total or 0)
+            for url, count, total in self.connection.execute(
+                "SELECT b.url, COUNT(*), SUM(m.size) "
+                "FROM messages m JOIN mailboxes b ON b.ROWID = m.mailbox "
+                "GROUP BY b.url"
+            )
+        ]
+
     def attachment_names(self, rowids: Iterable[int]) -> dict[int, list[str]]:
         """Attachment filenames for the given messages, keyed by message rowid.
 

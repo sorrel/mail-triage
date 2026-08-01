@@ -37,7 +37,8 @@ def build_fixture_db(
             sender INTEGER, subject INTEGER NOT NULL,
             date_sent INTEGER, mailbox INTEGER NOT NULL,
             read INTEGER NOT NULL DEFAULT 0,
-            flagged INTEGER NOT NULL DEFAULT 0
+            flagged INTEGER NOT NULL DEFAULT 0,
+            size INTEGER NOT NULL DEFAULT 0
         );
         """
     )
@@ -53,8 +54,8 @@ def build_fixture_db(
 
     for index, row in enumerate(rows, start=1):
         db.execute(
-            "INSERT INTO messages (ROWID, sender, subject, date_sent, mailbox, read, flagged) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (ROWID, sender, subject, date_sent, mailbox, read, flagged, size) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 row.get("rowid", index),
                 intern("addresses", "address", addresses, row["sender"]),
@@ -63,6 +64,7 @@ def build_fixture_db(
                 intern("mailboxes", "url", mailboxes, row["mailbox_url"]),
                 int(row.get("read", 0)),
                 int(row.get("flagged", 0)),
+                int(row.get("size", 0)),
             ),
         )
     if any(row.get("attachments") for row in rows):
