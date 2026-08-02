@@ -24,7 +24,7 @@ from mail_triage.mail_app import AppleScriptMail, MailError, MailNotRunningError
 from mail_triage.model.classify import Classifier
 from mail_triage.model.store import load_model, save_model, train_from_history
 from mail_triage.review import (
-    render_table, review, review_held, review_unplaced, summarise,
+    auto_decisions, render_table, review, review_held, review_unplaced, summarise,
 )
 from mail_triage.rules import RulesError, forget_rule, load_rules
 from mail_triage.size_report import (
@@ -339,7 +339,16 @@ def rules(forget: str | None) -> None:
     multiple=True,
     help="Triage only these sources, by name. Repeatable. Default: all of them.",
 )
-def triage(dry_run: bool, limit: int, ask: bool, source_names: tuple[str, ...]) -> None:
+@click.option(
+    "--auto",
+    is_flag=True,
+    default=False,
+    help="File mail at or above auto_threshold without asking. Never bins, never "
+    "touches mail a guard held back, and is still fully undoable.",
+)
+def triage(
+    dry_run: bool, limit: int, ask: bool, source_names: tuple[str, ...], auto: bool
+) -> None:
     """Classify every configured inbox, then file what you approve.
 
     Each source's inbox is scanned and the proposals are shown together;
@@ -348,7 +357,21 @@ def triage(dry_run: bool, limit: int, ask: bool, source_names: tuple[str, ...]) 
 
     Nothing moves without a confirmation at the prompt, and every move is
     journalled beforehand so 'mail-triage undo' can reverse the whole run.
+
+    With --auto there is no prompt: everything at or above auto_threshold is
+    filed and everything else is left alone. It files only — it never bins,
+    and never touches mail a guard held back — and the run is journalled and
+    undoable exactly as an interactive one is.
     """
+    if auto and dry_run:
+        raise click.ClickException(
+            "--auto files without asking and --dry-run moves nothing, so together "
+            "they contradict each other. Use --dry-run to see what --auto would do."
+        )
+    if auto:
+        # Asking is a conversation about senders the model cannot call, and
+        # in an unattended run there is nobody there to have it.
+        ask = False
     config = load_config()
     sources = list(config.sources)
     if source_names:
@@ -466,6 +489,21 @@ def triage(dry_run: bool, limit: int, ask: bool, source_names: tuple[str, ...]) 
             click.echo(f"\nLimited to {limit} of {len(placed)} filable messages "
                        f"({not_offered} not offered this run).")
 
+    if auto:
+        decisions = auto_decisions(proposals, config)
+        if not decisions:
+            click.echo(
+                f"\nNothing was confident enough to file on its own "
+                f"(auto_threshold is {config.auto_threshold:g})."
+            )
+            return
+        click.echo(
+            f"\nFiling {len(decisions)} message{'s' if len(decisions) != 1 else ''} "
+            f"at {config.auto_threshold:g} confidence or above, unprompted."
+        )
+        _act_on(decisions, sources, source_folders, config, mail)
+        return
+
     decisions = review(
         proposals,
         lambda text: click.prompt(text, default="q", show_default=False),
@@ -485,6 +523,16 @@ def triage(dry_run: bool, limit: int, ask: bool, source_names: tuple[str, ...]) 
     decisions += review_unplaced(
         proposals, lambda text: click.prompt(text, default="k", show_default=False)
     )
+    _act_on(decisions, sources, source_folders, config, mail)
+
+
+def _act_on(decisions, sources, source_folders, config, mail) -> None:
+    """Journal and carry out the accepted decisions, however they were reached.
+
+    Shared by the interactive review and by --auto so that both go through
+    the same trash check, the same journal, and the same undo instructions.
+    An unattended run must be no less reversible than one somebody watched.
+    """
     accepted = [decision for decision in decisions if decision.accepted]
     if not accepted:
         click.echo("Nothing accepted — no mail was moved.")

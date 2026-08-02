@@ -14,6 +14,7 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from mail_triage.config import Config
 from mail_triage.folders import account_prefix
 from mail_triage.model.classify import Proposal
 
@@ -327,6 +328,29 @@ def review(
             index -= 1
             answers[index] = None
     return [answer for answer in answers if answer is not None]
+
+
+def auto_decisions(proposals: list[Proposal], config: Config) -> list[Decision]:
+    """Accept proposals confident enough to act on without asking.
+
+    Two conditions, and the first does more work than it appears to.
+    ``folder is not None`` is what excludes everything a veto held back — a
+    vetoed proposal keeps its destination in ``held_folder`` and leaves
+    ``folder`` empty for exactly this reason — and it excludes bin proposals
+    too, whose destination is the Trash rather than a folder. So an
+    unattended run files mail and does nothing else: it never bins, and never
+    touches a message flagged, awaiting a reply, or carrying a bill.
+
+    Confidence is deliberately checked second and against ``auto_threshold``
+    rather than ``confidence_threshold``. A veto leaves confidence untouched,
+    so a held-back message can perfectly well read 0.99; confidence alone was
+    never enough to make this safe.
+    """
+    return [
+        Decision(item, accepted=True)
+        for item in proposals
+        if item.folder is not None and item.confidence >= config.auto_threshold
+    ]
 
 
 def binnable(proposals: list[Proposal]) -> list[Proposal]:
