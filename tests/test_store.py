@@ -190,3 +190,36 @@ def test_a_model_from_before_stage_b_is_refused_with_advice(tmp_path):
     }))
     with pytest.raises(ValueError, match="mail-triage learn"):
         load_model(path)
+
+
+def test_a_correction_outranks_ten_historical_filings(tmp_path):
+    """The spec's fourth mechanism: instruction beats habit.
+
+    Ten filings say this sender's mail goes to Orders. One correction says
+    Finance. The correction is the more recent instruction and carries
+    ``correction_weight``, so it must win — otherwise changing your mind
+    would mean re-filing history by hand.
+    """
+    from tests.conftest import build_fixture_db
+    from mail_triage.corrections import Correction, record_correction
+
+    db = tmp_path / "Envelope Index"
+    build_fixture_db(db, [
+        {"sender": "bills@shop.example", "subject": f"Invoice {n}", "date_sent": 1_700_000_000,
+         "mailbox_url": "imap://AAAAAAAA/Orders", "read": 1}
+        for n in range(10)
+    ])
+    config = Config(account_url_prefix="imap://AAAAAAAA", local_dir=tmp_path)
+
+    without = train_from_history(config, db)
+    assert without.sender.predict("bills@shop.example", "shop.example").folder == "orders"
+
+    record_correction(
+        Correction(sender="bills@shop.example", domain="shop.example", subject="Invoice",
+                   chosen_folder="Finance", rejected_folder="Orders",
+                   recorded_at=1_700_000_000),
+        config,
+    )
+    with_correction = train_from_history(config, db)
+    assert with_correction.sender.predict("bills@shop.example", "shop.example").folder == "finance"
+    assert with_correction.example_count == without.example_count + 1

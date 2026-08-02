@@ -747,3 +747,78 @@ def test_only_attention_vetoes_are_offered():
 
     review_held([invoice, deletion], prompt)
     assert prompts == []
+
+
+# --- Overriding the folder during review (Task 12) -------------------------
+#
+# A typed folder name is the correction signal: the classifier proposed one
+# place, the user named another. It is validated against the real mailboxes
+# rather than taken on trust — the prompt already spends y, n, d and b, so an
+# unrecognised reply is far more likely to be a slip than a folder.
+
+FOLDERS = ["Ledger/Orders", "Ledger/Finance", "Work/Finance"]
+
+
+def matcher(folders=FOLDERS):
+    from mail_triage.folders import match_folders
+    return lambda typed: match_folders(typed, folders)
+
+
+def test_typing_a_folder_overrides_the_proposal():
+    answers = iter(["s", "Ledger/Finance", ""])
+    decisions = review([placed("Ledger/Orders")], lambda text: next(answers), matcher())
+    assert decisions[0].accepted is True
+    assert decisions[0].override_folder == "Ledger/Finance"
+    assert decisions[0].folder == "Ledger/Finance"
+
+
+def test_a_leaf_name_is_enough_to_override():
+    answers = iter(["s", "orders", ""])
+    decisions = review([placed("Ledger/Finance")], lambda text: next(answers), matcher())
+    assert decisions[0].folder == "Ledger/Orders"
+
+
+def test_an_unknown_folder_is_refused_and_asked_again():
+    prompts = []
+
+    def prompt(text):
+        prompts.append(text)
+        return ["s", "Nowhere", "y", ""][len(prompts) - 1]
+
+    decisions = review([placed("Ledger/Orders")], prompt, matcher())
+    assert "No mailbox called 'Nowhere'" in prompts[2]
+    assert decisions[0].override_folder is None
+    assert decisions[0].accepted is True
+
+
+def test_an_ambiguous_folder_asks_for_more_of_the_path():
+    prompts = []
+
+    def prompt(text):
+        prompts.append(text)
+        return ["s", "Finance", "Work/Finance", ""][len(prompts) - 1]
+
+    decisions = review([placed("Ledger/Orders")], prompt, matcher())
+    assert "could be" in prompts[2]
+    assert "Ledger/Finance" in prompts[2] and "Work/Finance" in prompts[2]
+    assert decisions[0].override_folder == "Work/Finance"
+
+
+def test_without_a_folder_list_a_stray_reply_still_means_no():
+    """Back-compatible, and the safe reading: with nothing to check a name
+    against, treating it as a destination would file mail on a typo."""
+    answers = iter(["s", "Finance", ""])
+    decisions = review([placed("Ledger/Orders")], lambda text: next(answers))
+    assert decisions[0].accepted is False
+    assert decisions[0].override_folder is None
+
+
+def test_the_step_prompt_says_a_folder_may_be_typed():
+    prompts = []
+
+    def prompt(text):
+        prompts.append(text)
+        return ["s", "y", ""][len(prompts) - 1]
+
+    review([placed("Ledger/Orders")], prompt, matcher())
+    assert "folder" in prompts[1]

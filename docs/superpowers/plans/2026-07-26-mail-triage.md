@@ -2576,7 +2576,22 @@ git commit -m "feat: live moves with journalling and undo"
 
 ---
 
-### Task 12: Corrections feed back into the model
+### Task 12: Corrections feed back into the model — COMPLETE 2 August 2026
+
+> Two deviations, both because the plan predates the current review loop.
+>
+> **Step 6's override syntax.** "Anything that is not y or n is a folder
+> name" was written when the prompt had two answers; it now spends y, n, d,
+> b and q, so a mistyped letter would have become a filing destination. A
+> typed name is matched against the account's real folders instead — no
+> match is refused, an ambiguous one asks for more of the path — exactly as
+> `asking.py` handles the same input. Without a folder list to check
+> against, `review` keeps its old reading: a stray reply means "no".
+>
+> **Corrections are recorded for overrides only, not rejections.** A `n`
+> says "not there" and names nowhere instead, so it would train the empty
+> folder — worse than learning nothing. Rejection as negative evidence is a
+> separate idea, and one to measure before building.
 
 **Files:**
 - Create: `src/mail_triage/corrections.py`
@@ -2589,13 +2604,13 @@ git commit -m "feat: live moves with journalling and undo"
 
 This is the spec's fourth mechanism — **corrections outrank history** — at `correction_weight` (default 10×). It is also the signal that tells the user when auto mode is warranted.
 
-- [ ] **Step 1: Create the branch**
+- [x] **Step 1: Create the branch**
 
 ```bash
 git checkout -b feature/corrections
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/test_corrections.py`:
 
@@ -2643,12 +2658,12 @@ def test_loading_with_no_file_returns_empty(tmp_path):
     assert load_corrections(make_config(tmp_path)) == []
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_corrections.py -v`
 Expected: FAIL — no module `mail_triage.corrections`
 
-- [ ] **Step 4: Implement `corrections.py`**
+- [x] **Step 4: Implement `corrections.py`**
 
 ```python
 """Record where the user actually wanted a message to go.
@@ -2711,7 +2726,7 @@ def corrections_as_examples(
     ]
 ```
 
-- [ ] **Step 5: Fold corrections into training**
+- [x] **Step 5: Fold corrections into training**
 
 In `train_from_history`, after building the corpus:
 
@@ -2723,16 +2738,16 @@ In `train_from_history`, after building the corpus:
 
 Add a test in `tests/test_store.py` asserting that a correction pointing `bills@shop.example` at `Finance` beats ten historical filings to `Orders`.
 
-- [ ] **Step 6: Capture overrides during review**
+- [x] **Step 6: Capture overrides during review**
 
 Extend the step-through prompt so a reply that is neither `y` nor `n` is treated as a folder name override, producing `Decision(item, accepted=True, override_folder=<name>)`. Add a review test for it. In the `triage` command, write a `Correction` for every decision where the user rejected or overrode the proposal.
 
-- [ ] **Step 7: Run the full suite**
+- [x] **Step 7: Run the full suite**
 
 Run: `uv run pytest -v`
 Expected: all PASS
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/mail_triage/corrections.py src/mail_triage/model/store.py src/mail_triage/review.py tests/

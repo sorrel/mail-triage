@@ -247,16 +247,28 @@ def _confirm_or_go_back(answered: int, noun: str, prompt: Callable[[str], str]) 
     return reply == "b"
 
 
-def review(proposals: list[Proposal], prompt: Callable[[str], str]) -> list[Decision]:
+def review(
+    proposals: list[Proposal],
+    prompt: Callable[[str], str],
+    match_folders: Callable[[str], list[str]] | None = None,
+) -> list[Decision]:
     """Ask what to do. Returns only the decisions the user made.
 
     Answers: a = accept all, q = quit without acting, s = step through one by one.
     In step mode: y = accept, n = reject, d = delete (to the Trash), b = go
-    back and re-answer the previous message.
+    back and re-answer the previous message. Typing a folder name instead
+    files the message there — the correction that teaches the model it
+    proposed the wrong place.
 
     ``d`` is deliberately available only per message. "Accept all" must never
     be able to bin anything — a batch answer given in one keystroke is the
     wrong instrument for a destructive choice, even a reversible one.
+
+    ``match_folders`` maps a typed name to every real mailbox it could mean,
+    exactly as the sender questions do. Without it a stray reply still means
+    "no": four of the answers here are single letters, so an unrecognised
+    reply is far more likely to be a slip than a destination, and with no
+    folder list to check it against there is no way to tell the difference.
 
     Unplaced proposals (``folder is None``) are never offered — there is
     nothing to accept or reject for a message the classifier left alone.
@@ -276,13 +288,18 @@ def review(proposals: list[Proposal], prompt: Callable[[str], str]) -> list[Deci
     # a message and overwrite the answer given for it.
     answers: list[Decision | None] = [None] * len(placed)
     index = 0
+    # Carried between iterations so a refused folder name can explain itself
+    # in the next question rather than in a line above it that scrolls away.
+    note = ""
     while index < len(placed):
         item = placed[index]
         destination = item.folder if item.folder is not None else "delete"
-        reply = prompt(
-            f"{_clip(item.message.subject, SUBJECT_WIDTH)} → {destination}? "
-            "[y/n/d, b=back] "
-        ).strip().casefold()
+        options = "[y/n/d, b=back, or a folder] " if match_folders else "[y/n/d, b=back] "
+        raw = prompt(
+            f"{note}{_clip(item.message.subject, SUBJECT_WIDTH)} → {destination}? {options}"
+        ).strip()
+        note = ""
+        reply = raw.casefold()
         if reply == "b":
             # Nothing has moved yet — the whole loop only collects decisions —
             # so going back is just discarding the previous answer.
@@ -292,6 +309,15 @@ def review(proposals: list[Proposal], prompt: Callable[[str], str]) -> list[Deci
             continue
         if reply == "d":
             answers[index] = Decision(item, accepted=True, action="delete")
+        elif match_folders and raw and reply not in ("y", "n"):
+            matches = match_folders(raw)
+            if not matches:
+                note = f"No mailbox called '{raw}'. "
+                continue
+            if len(matches) > 1:
+                note = f"'{raw}' could be {', '.join(matches)}; type more of the path. "
+                continue
+            answers[index] = Decision(item, accepted=True, override_folder=matches[0])
         else:
             answers[index] = Decision(item, accepted=reply == "y", action=item.action)
         index += 1

@@ -14,6 +14,7 @@ from mail_triage.asking import (
 )
 from mail_triage.cli_help import ColouredGroup
 from mail_triage.config import load_config
+from mail_triage.corrections import load_corrections, record_overrides
 from mail_triage.deletion import PerAccountDeletionIndex, build_deletion_index
 from mail_triage.envelope import DEFAULT_DB_PATH, EnvelopeReader, MessageRow, snapshot_database
 from mail_triage.execute import execute
@@ -185,6 +186,15 @@ def learn(drift: bool) -> None:
     model = train_from_history(config, DEFAULT_DB_PATH)
     save_model(model, config.model_path)
     click.echo(f"Trained on {model.example_count:,} filed messages.")
+    # Reported separately from the total because they are not equal evidence:
+    # each one counts for correction_weight historical filings, and knowing
+    # how many there are is what says whether the model is being argued with.
+    corrections = load_corrections(config)
+    if corrections:
+        click.echo(
+            f"Including {len(corrections):,} correction"
+            f"{'s' if len(corrections) != 1 else ''} at {config.correction_weight:g}× weight."
+        )
     click.echo(f"Known senders: {len(model.sender.by_sender):,}")
     click.echo(f"Known domains: {len(model.sender.by_domain):,}")
     click.echo(f"Model written to {config.model_path}")
@@ -456,7 +466,11 @@ def triage(dry_run: bool, limit: int, ask: bool, source_names: tuple[str, ...]) 
             click.echo(f"\nLimited to {limit} of {len(placed)} filable messages "
                        f"({not_offered} not offered this run).")
 
-    decisions = review(proposals, lambda text: click.prompt(text, default="q", show_default=False))
+    decisions = review(
+        proposals,
+        lambda text: click.prompt(text, default="q", show_default=False),
+        lambda typed: match_folders(typed, folders),
+    )
     # Then the mail the attention guard held back. Offered before the binning
     # pass because it is the more consequential of the two: these are
     # messages the classifier was confident about and something else
@@ -475,6 +489,17 @@ def triage(dry_run: bool, limit: int, ask: bool, source_names: tuple[str, ...]) 
     if not accepted:
         click.echo("Nothing accepted — no mail was moved.")
         return
+
+    # Every folder the user typed over a proposal, recorded before anything
+    # moves: it is an instruction about where mail belongs, and it holds
+    # whether or not the move that follows happens to succeed. The next
+    # 'learn' weights these at correction_weight against plain history.
+    corrected = record_overrides(accepted, config)
+    if corrected:
+        click.echo(
+            f"Recorded {corrected} correction{'s' if corrected != 1 else ''} — "
+            "run 'mail-triage learn' to fold them in."
+        )
 
     to_bin = sum(1 for decision in accepted if decision.is_delete)
     if to_bin:

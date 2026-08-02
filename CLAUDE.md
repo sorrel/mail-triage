@@ -45,6 +45,7 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `guards.py` | Do-not-file: flagged, or may need a reply |
 | `invoices.py` | Bill detection |
 | `rules.py` | Hard per-sender rules |
+| `corrections.py` | Folders typed over a proposal, weighted 10× in training |
 | `asking.py` | Choosing and asking about uncertain senders |
 | `review.py` | Proposal table and the confirm loops |
 | `execute.py` | The only module that moves mail |
