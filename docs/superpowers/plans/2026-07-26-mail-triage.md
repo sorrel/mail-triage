@@ -3015,7 +3015,26 @@ git commit -m "feat: naive Bayes token model for senders without history"
 
 ---
 
-### Task 14: `--auto` mode and `explain` — `explain` COMPLETE 28 July 2026
+### Task 14: `--auto` mode and `explain` — COMPLETE (`explain` 28 July 2026, `--auto` 2 August 2026)
+
+> `--auto` as built, beyond the sketch below:
+>
+> `auto_decisions`' `folder is not None` does more than exclude unplaced
+> mail. A veto leaves `folder` empty and keeps the destination in
+> `held_folder` precisely so nothing can act on it by accident, and a bin
+> proposal has no folder either — so the same clause is what stops an
+> unattended run binning anything or touching mail that is flagged,
+> awaiting a reply, or a bill. Confidence alone would not have: a veto
+> leaves it untouched, so held mail can read 0.99. There is a test per case.
+>
+> `--auto` forces `--ask` off (asking is a conversation, and nobody is
+> there to have it) and shares one `_act_on` helper with the interactive
+> path, so both journal identically and an unattended run is no less
+> undoable than a watched one.
+>
+> Not verified live, per the repository's third safety rule: `--auto`
+> moves real mail with no prompt, so it is exercised by the suite and by
+> `--dry-run` only.
 
 > `explain` is done (steps 6–8 for that half); `--auto` and `auto_decisions`
 > are deliberately deferred until Task 12 exists. Auto-filing with no
@@ -3033,13 +3052,13 @@ git commit -m "feat: naive Bayes token model for senders without history"
 - Consumes: everything above.
 - Produces: `triage --auto` behaviour; `explain SENDER` command.
 
-- [ ] **Step 1: Create the branch**
+- [x] **Step 1: Create the branch**
 
 ```bash
 git checkout -b feature/auto-mode-and-explain
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/test_auto_mode.py`:
 
@@ -3074,12 +3093,12 @@ def test_threshold_is_configurable(tmp_path):
     assert len(decisions) == 1
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_auto_mode.py -v`
 Expected: FAIL — `ImportError: cannot import name 'auto_decisions'`
 
-- [ ] **Step 4: Implement `auto_decisions` in `review.py`**
+- [x] **Step 4: Implement `auto_decisions` in `review.py`**
 
 ```python
 def auto_decisions(proposals: list[Proposal], config: Config) -> list[Decision]:
@@ -3091,12 +3110,12 @@ def auto_decisions(proposals: list[Proposal], config: Config) -> list[Decision]:
     ]
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_auto_mode.py -v`
 Expected: PASS (3 tests)
 
-- [ ] **Step 6: Wire `--auto` into the CLI and add `explain`**
+- [x] **Step 6: Wire `--auto` into the CLI and add `explain`**
 
 ```python
 @cli.command()
@@ -3119,12 +3138,12 @@ def explain(sender: str) -> None:
 
 Modes are mutually exclusive: raise a `ClickException` if both `--auto` and `--dry-run` are given.
 
-- [ ] **Step 7: Verify**
+- [x] **Step 7: Verify**
 
 Run: `uv run mail-triage explain <a sender from your inbox>`
 Expected: destination, confidence, and the full weighted folder breakdown.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/mail_triage/cli.py src/mail_triage/review.py tests/test_auto_mode.py

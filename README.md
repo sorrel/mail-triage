@@ -114,6 +114,13 @@ A run has four stages:
 Nothing moves until you have answered, and the run ends by telling you how to
 reverse it.
 
+`triage --auto` skips all of that and files everything at or above
+`auto_threshold` (0.9 by default). It only ever files: it never bins, and
+never touches mail a guard held back — flagged, apparently awaiting a reply,
+or carrying a bill — however confident the classifier was about it. The run is
+journalled like any other, so `mail-triage undo` reverses it in full. Worth
+running `triage --dry-run` first to see what it would do.
+
 ### Commands
 
 | Command | What it does |
@@ -127,6 +134,7 @@ reverse it.
 | `triage` | Classify every configured inbox, then file what you approve |
 | `triage --dry-run` | Report only; move nothing |
 | `triage --limit N` | Offer at most N messages for filing |
+| `triage --auto` | File everything at or above `auto_threshold` without asking |
 | `triage --no-ask` | Skip the sender questions |
 | `triage --source NAME` | Triage only that source. Repeatable |
 | `rules` | List the answers you have given about senders |
