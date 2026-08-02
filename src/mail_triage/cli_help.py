@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import click
 
+from mail_triage.envelope import SnapshotError
+
 from mail_triage.review import display_width
 
 # Commands in the order they are usually wanted, grouped by the job they do.
@@ -48,6 +50,18 @@ def _grouped(names: list[str]) -> list[tuple[str, list[str]]]:
 
 class ColouredGroup(click.Group):
     """A Click group whose help is grouped by task and coloured."""
+
+    def invoke(self, ctx: click.Context):
+        """Report an unco-operative snapshot as an error, not a traceback.
+
+        Handled here rather than command by command: every command that reads
+        mail starts by copying Mail's database, and each one wants the same
+        answer — say what happened, and stop.
+        """
+        try:
+            return super().invoke(ctx)
+        except SnapshotError as error:
+            raise click.ClickException(str(error)) from error
 
     def format_options(self, ctx: click.Context, formatter) -> None:
         records = [

@@ -13,6 +13,7 @@ from click.testing import CliRunner
 import mail_triage.cli as cli_module
 from mail_triage.cli import cli
 from mail_triage.config import Config
+from mail_triage.envelope import SnapshotError
 from mail_triage.mail_app import MailError, MailNotRunningError
 
 
@@ -91,6 +92,18 @@ def test_accounts_permission_denied(tmp_path, monkeypatch):
     assert result.exit_code != 0
     assert "Full Disk Access" in result.output
     assert "Cannot find" not in result.output
+
+
+def test_a_database_that_never_settles_is_reported_not_thrown(tmp_path, monkeypatch):
+    """A raced snapshot is a condition to explain, not a traceback."""
+    def raise_snapshot_error(source, dest_dir):
+        raise SnapshotError("Mail checkpointed its database every time")
+
+    monkeypatch.setattr(cli_module, "snapshot_database", raise_snapshot_error)
+    result = CliRunner().invoke(cli, ["accounts"])
+    assert result.exit_code != 0
+    assert "checkpointed its database" in result.output
+    assert not isinstance(result.exception, SnapshotError)
 
 
 def _stub_config(tmp_path):

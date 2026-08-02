@@ -1,4 +1,14 @@
-from mail_triage.envelope import EnvelopeReader, snapshot_database
+import shutil
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from mail_triage.envelope import (
+    EnvelopeReader,
+    SnapshotError,
+    snapshot_database,
+)
 
 
 def test_reads_all_messages(fixture_db):
@@ -146,3 +156,111 @@ def test_mailbox_sizes_totals_bytes_and_counts_per_mailbox(tmp_path):
         }
     finally:
         reader.close()
+
+
+class _CheckpointingWriter:
+    """A stand-in for Mail: a writer that checkpoints mid-copy.
+
+    A checkpoint restarts the write-ahead log, so a -wal copied after one no
+    longer carries the commits a db copied before it is missing. That gap is
+    what silently emptied a triage run of everything recent.
+    """
+
+    def __init__(self, connection, real_copy, source, times):
+        self.connection = connection
+        self.real_copy = real_copy
+        self.source = source
+        self.times = times
+        self.copies = 0
+
+    def __call__(self, src, dst, *args, **kwargs):
+        result = self.real_copy(src, dst, *args, **kwargs)
+        if Path(src) == self.source:
+            self.copies += 1
+            if self.times:
+                self.times -= 1
+                self.connection.execute("PRAGMA wal_checkpoint(RESTART)")
+                self.connection.execute("INSERT INTO notes(body) VALUES ('after')")
+                self.connection.commit()
+        return result
+
+
+def _wal_database(path):
+    """A tiny database in WAL mode with uncheckpointed commits, as Mail's is."""
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA journal_mode=wal")
+    connection.execute("PRAGMA wal_autocheckpoint=0")
+    connection.execute("CREATE TABLE notes (ROWID INTEGER PRIMARY KEY, body TEXT)")
+    connection.commit()
+    for _ in range(5):
+        connection.execute("INSERT INTO notes(body) VALUES ('in the wal')")
+    connection.commit()
+    return connection
+
+
+def _snapshot_notes(copied):
+    connection = sqlite3.connect(f"file:{copied}?mode=ro", uri=True)
+    try:
+        return connection.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+    finally:
+        connection.close()
+
+
+def test_a_checkpoint_during_the_copy_is_retried(tmp_path, monkeypatch):
+    """The snapshot must never quietly lose what was in the write-ahead log."""
+    source = tmp_path / "Envelope Index"
+    writer = _wal_database(source)
+    real_copy = shutil.copy2
+    faulty = _CheckpointingWriter(writer, real_copy, source, times=1)
+    monkeypatch.setattr(shutil, "copy2", faulty)
+
+    copied = snapshot_database(source, tmp_path / "snap")
+
+    monkeypatch.undo()
+    live = writer.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+    assert _snapshot_notes(copied) == live
+    assert faulty.copies == 2, "the raced copy should have been taken again"
+    writer.close()
+
+
+def test_a_database_that_never_settles_is_an_error(tmp_path, monkeypatch):
+    """Better to stop than to hand back a snapshot missing recent mail."""
+    source = tmp_path / "Envelope Index"
+    writer = _wal_database(source)
+    faulty = _CheckpointingWriter(writer, shutil.copy2, source, times=99)
+    monkeypatch.setattr(shutil, "copy2", faulty)
+
+    with pytest.raises(SnapshotError):
+        snapshot_database(source, tmp_path / "snap")
+
+    monkeypatch.undo()
+    writer.close()
+
+
+def test_mail_writing_whilst_we_copy_is_not_a_race(tmp_path, monkeypatch):
+    """A commit appends to the log; only a checkpoint disturbs what we copied.
+
+    Retrying on every arriving message would spin on a busy mailbox for no
+    gain: those frames sit on top of the database we already have.
+    """
+    source = tmp_path / "Envelope Index"
+    writer = _wal_database(source)
+    real_copy = shutil.copy2
+
+    def busy_copy(src, dst, *args, **kwargs):
+        result = real_copy(src, dst, *args, **kwargs)
+        if Path(src) == source:
+            busy_copy.copies += 1
+            writer.execute("INSERT INTO notes(body) VALUES ('arrived mid-copy')")
+            writer.commit()
+        return result
+
+    busy_copy.copies = 0
+    monkeypatch.setattr(shutil, "copy2", busy_copy)
+
+    copied = snapshot_database(source, tmp_path / "snap")
+
+    monkeypatch.undo()
+    assert busy_copy.copies == 1, "an ordinary commit should not force a retry"
+    assert _snapshot_notes(copied) >= 5
+    writer.close()
