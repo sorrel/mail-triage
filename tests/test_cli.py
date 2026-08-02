@@ -13,6 +13,7 @@ from click.testing import CliRunner
 import mail_triage.cli as cli_module
 from mail_triage.cli import cli
 from mail_triage.config import Config
+from mail_triage.corrections import load_corrections
 from mail_triage.envelope import SnapshotError
 from mail_triage.mail_app import MailError, MailNotRunningError
 
@@ -1001,3 +1002,47 @@ def test_size_command_never_writes_to_the_real_database(tmp_path, monkeypatch):
 
     CliRunner().invoke(cli_module.cli, ["size", "--min-size", "0"])
     assert db.read_bytes() == before
+
+
+# --- Corrections captured during review (Task 12) -----------------------------
+
+def test_typing_a_folder_over_a_proposal_records_a_correction(tmp_path, monkeypatch):
+    """The correction signal, end to end: proposed Projects, filed Personal."""
+    runner, mail = _prepare_unplaceable_run(tmp_path, monkeypatch)
+    # The fixture's second training folder, so it is a real mailbox in the
+    # database's folder list and a real destination in the fake.
+    mail._mailboxes.append("Personal")
+    mail._folder_contents[("*", "Personal")] = []
+
+    result = runner.invoke(cli, ["triage", "--no-ask"], input="s\nPersonal\n\nn\n")
+
+    assert result.exit_code == 0
+    assert "Recorded 1 correction" in result.output
+    recorded = load_corrections(_stub_config(tmp_path))
+    assert [(item.chosen_folder, item.rejected_folder) for item in recorded] == [
+        ("Personal", "Projects")
+    ]
+    assert [entry[1] for entry in mail.moved] == ["Personal"]
+
+
+def test_accepting_the_proposal_records_no_correction(tmp_path, monkeypatch):
+    runner, _ = _prepare_unplaceable_run(tmp_path, monkeypatch)
+    result = runner.invoke(cli, ["triage", "--no-ask"], input="s\ny\n\nn\n")
+    assert result.exit_code == 0
+    assert "correction" not in result.output
+    assert load_corrections(_stub_config(tmp_path)) == []
+
+
+def test_learn_reports_the_corrections_it_folded_in(tmp_path, monkeypatch):
+    from mail_triage.corrections import Correction, record_correction
+
+    runner, _ = _prepare_unplaceable_run(tmp_path, monkeypatch)
+    record_correction(
+        Correction(sender="stranger@nowhere.example", domain="nowhere.example",
+                   subject="Unsolicited offer", chosen_folder="Personal",
+                   rejected_folder=None, recorded_at=1_700_000_000),
+        _stub_config(tmp_path),
+    )
+    result = runner.invoke(cli, ["learn", "--no-drift"])
+    assert result.exit_code == 0
+    assert "Including 1 correction at 10× weight." in result.output

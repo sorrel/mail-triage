@@ -102,7 +102,11 @@ A run has four stages:
 2. **The proposal table**, and a summary of what is staying put and why.
 3. **Review.** `a` accepts everything proposed, `s` steps through one at a
    time (`y` file, `n` skip, `d` bin, `b` go back and change the previous
-   answer), `q` does nothing.
+   answer), `q` does nothing. Typing a folder name instead files the message
+   there — a leaf name is enough, and an unrecognised one is refused rather
+   than guessed at. That is recorded as a **correction**: the next `learn`
+   weights it at ten historical filings, so putting a sender right once is
+   enough to change where its mail goes.
 4. **Binning.** An optional pass over what stayed in the inbox, offering to
    bin each one. Bills and anything that may need a reply are never offered
    here.

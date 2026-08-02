@@ -11,6 +11,7 @@ from pathlib import Path
 
 from mail_triage.config import Config
 from mail_triage.corpus import build_corpus
+from mail_triage.corrections import corrections_as_examples, load_corrections
 from mail_triage.envelope import EnvelopeReader, snapshot_database
 from mail_triage.model.sender import SenderModel
 from mail_triage.model.tokens import TokenModel
@@ -87,7 +88,12 @@ def load_model(path: Path) -> TrainedModel:
 
 
 def train_from_history(config: Config, db_path: Path) -> TrainedModel:
-    """Snapshot the database, build the corpus, and train."""
+    """Snapshot the database, build the corpus, and train.
+
+    Corrections join the corpus at ``correction_weight`` times the weight of a
+    historical filing, which is how a changed mind overrides an old habit
+    without re-filing thousands of past messages by hand.
+    """
     with tempfile.TemporaryDirectory() as work:
         snapshot = snapshot_database(db_path, Path(work))
         reader = EnvelopeReader(snapshot)
@@ -95,6 +101,7 @@ def train_from_history(config: Config, db_path: Path) -> TrainedModel:
             examples = build_corpus(reader.all_messages(), config)
         finally:
             reader.close()
+    examples.extend(corrections_as_examples(load_corrections(config), config))
     sender_model = SenderModel()
     sender_model.train(examples)
     sender_model.train_drift(examples)
