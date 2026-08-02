@@ -699,7 +699,7 @@ def test_a_bin_rule_shows_the_bin_as_the_destination(tmp_path, monkeypatch):
              answered_at=1, candidates={}),
     )
     result = runner.invoke(cli, ["triage", "--dry-run", "--no-ask"], input="")
-    assert "bin" in result.output.casefold()
+    assert "delete" in result.output.casefold()
 
 
 def test_rules_lists_a_bin_rule_clearly(tmp_path, monkeypatch):
@@ -714,7 +714,7 @@ def test_rules_lists_a_bin_rule_clearly(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli, ["rules"])
     assert result.exit_code == 0
     assert "junk@shop.example" in result.output
-    assert "bin" in result.output.casefold()
+    assert "delete" in result.output.casefold()
 
 
 # --- Triaging several sources ---------------------------------------------------
