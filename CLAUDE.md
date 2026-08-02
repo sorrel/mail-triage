@@ -96,6 +96,17 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   *appearing* to work, because it also catches `[Gmail]/All Mail` via the
   `a` of `All Mail`. Write `[[]Gmail]*`. The failure mode is a silent hole
   in the training corpus, not an unexcluded All Mail.
+- **Copying the database and its `-wal` is two operations, and Mail does not
+  pause between them.** If Mail checkpoints in the gap, the database is copied
+  before the checkpoint (so it lacks everything still in the log) and the log
+  is copied after the restart (so it no longer carries those commits either).
+  The snapshot then opens perfectly happily whilst missing every recent
+  message: a run on 2 August 2026 saw 3 of 10 inbox messages, all of them old.
+  `snapshot_database` now verifies the copy — the database file's size and
+  mtime, and the log's 8-byte salt, which changes on every restart — and takes
+  it again if any of them moved. Ordinary commits only append frames, so they
+  are deliberately not treated as a race; watching the log's *length* would
+  spin on a busy mailbox for nothing.
 - **The database's folder path and the on-disk `.mbox` tree correspond
   exactly.** A mailbox URL path of `Parent/Child` is
   `V10/<account-uuid>/Parent.mbox/Child.mbox` on disk, so the two can be

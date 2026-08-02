@@ -45,22 +45,76 @@ class MessageRow:
     flagged: bool = False
 
 
-def snapshot_database(source: Path = DEFAULT_DB_PATH, dest_dir: Path | None = None) -> Path:
+SNAPSHOT_ATTEMPTS = 5
+
+
+class SnapshotError(RuntimeError):
+    """Mail would not hold still long enough to be copied consistently."""
+
+
+def _checkpoint_state(source: Path) -> tuple[int, int, bytes]:
+    """What a checkpoint disturbs: the database file, and the log's identity.
+
+    The write-ahead log's 8-byte salt (header bytes 16–24) changes every time
+    the log restarts, which is precisely what a checkpoint does. Ordinary
+    commits only append frames, leaving both the database file and the salt
+    alone — so this deliberately ignores the log's length.
+    """
+    stat = source.stat()
+    salt = b""
+    wal = source.with_name(source.name + "-wal")
+    if wal.exists():
+        with wal.open("rb") as handle:
+            salt = handle.read(24)[16:24]
+    return (stat.st_size, stat.st_mtime_ns, salt)
+
+
+def snapshot_database(
+    source: Path = DEFAULT_DB_PATH,
+    dest_dir: Path | None = None,
+    attempts: int = SNAPSHOT_ATTEMPTS,
+) -> Path:
     """Copy the database and its write-ahead log to ``dest_dir``.
 
     Copying the -wal and -shm companions keeps the snapshot consistent with
     what Mail has most recently written.
+
+    The copies are not one operation, and Mail does not pause for them. If it
+    checkpoints in between, the database is copied *before* the checkpoint —
+    so it lacks everything still in the log — and the log is copied *after*
+    the restart, by which point it no longer carries those commits either.
+    The snapshot then opens perfectly happily and is simply missing every
+    recent message. That is not theoretical: a triage run on 2 August 2026
+    saw 3 of 10 inbox messages, all of them the old ones, because Mail
+    checkpointed during that very second.
+
+    So the copy is verified rather than assumed: if the database file or the
+    log's salt moved whilst we were copying, the snapshot is thrown away and
+    taken again. The copy is an APFS clone — 265 MB in 0.05 s — so the window
+    is tiny and a retry costs nothing.
     """
     if dest_dir is None:
         raise ValueError("dest_dir is required")
     dest_dir.mkdir(parents=True, exist_ok=True)
     destination = dest_dir / source.name
-    shutil.copy2(source, destination)
-    for suffix in ("-wal", "-shm"):
-        companion = source.with_name(source.name + suffix)
-        if companion.exists():
-            shutil.copy2(companion, dest_dir / companion.name)
-    return destination
+    companions = [source.with_name(source.name + suffix) for suffix in ("-wal", "-shm")]
+    for _ in range(attempts):
+        before = _checkpoint_state(source)
+        # Any leftovers from a raced attempt: a companion that has since gone
+        # would otherwise be read as though it were part of this snapshot.
+        for companion in companions:
+            (dest_dir / companion.name).unlink(missing_ok=True)
+        shutil.copy2(source, destination)
+        for companion in companions:
+            if companion.exists():
+                shutil.copy2(companion, dest_dir / companion.name)
+        if _checkpoint_state(source) == before:
+            return destination
+    raise SnapshotError(
+        f"Mail checkpointed its database every time it was copied "
+        f"({attempts} attempts), so no consistent snapshot could be taken. "
+        "Nothing was read; try again in a moment."
+    )
 
 
 class EnvelopeReader:
