@@ -17,7 +17,7 @@ from mail_triage.config import load_config
 from mail_triage.deletion import PerAccountDeletionIndex, build_deletion_index
 from mail_triage.envelope import DEFAULT_DB_PATH, EnvelopeReader, MessageRow, snapshot_database
 from mail_triage.execute import execute
-from mail_triage.folders import account_prefix, folder_path
+from mail_triage.folders import account_prefix, folder_path, match_folders
 from mail_triage.journal import Journal, list_runs, new_run_id, undo_run
 from mail_triage.mail_app import AppleScriptMail, MailError, MailNotRunningError
 from mail_triage.model.classify import Classifier
@@ -268,11 +268,10 @@ def _ask_about_uncertain_senders(
         f"\n{len(uncertain)} senders I can't call. One answer settles every message "
         "from them, now and in future."
     )
-    real_folders = {folder.casefold(): folder for folder in folders}
     answered = ask_all(
         uncertain,
         lambda text: click.prompt(text, default="", show_default=False, prompt_suffix=""),
-        lambda typed: real_folders.get(typed.strip().casefold()),
+        lambda typed: match_folders(typed, folders),
         config.rules_path,
     )
     click.echo()
@@ -302,7 +301,7 @@ def rules(forget: str | None) -> None:
         click.echo("No rules yet. 'mail-triage triage' will ask about uncertain senders.")
         return
     for sender, rule in sorted(known.items()):
-        target = {"file": rule.folder, "bin": "(bin)"}.get(rule.action, "(left alone)")
+        target = {"file": rule.folder, "bin": "(delete)"}.get(rule.action, "(left alone)")
         click.echo(f"{sender:<44}{target}")
     click.echo(f"\n{len(known)} rules. Remove one with: mail-triage rules --forget <sender>")
 
@@ -497,7 +496,7 @@ def triage(dry_run: bool, limit: int, ask: bool, source_names: tuple[str, ...]) 
             if source.trash.casefold() not in source_folders.get(source.prefix, set()):
                 raise click.ClickException(
                     f"No mailbox '{source.trash}' in account '{source.name}', so "
-                    "there is nowhere to bin to. Set that source's 'trash' in "
+                    "there is nowhere to delete to. Set that source's 'trash' in "
                     "local/config.toml to the name the account uses."
                 )
 
@@ -539,7 +538,7 @@ def explain(sender: str) -> None:
     if rule is not None:
         decision = {
             "file": f"filed to '{rule.folder}'",
-            "bin": "binned",
+            "bin": "deleted",
             "leave": "left alone",
         }[rule.action]
         click.echo(f"You have a rule for {address}: mail is {decision}.")

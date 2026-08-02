@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from collections.abc import Iterable
 from urllib.parse import unquote, urlparse
 
 _WHITESPACE = re.compile(r"\s+")
@@ -29,6 +30,37 @@ def folder_path(url: str) -> str:
 def normalise_folder(name: str) -> str:
     """Casefold and collapse whitespace so the same folder matches across accounts."""
     return _WHITESPACE.sub(" ", name.strip()).casefold()
+
+
+def match_folders(typed: str, folders: Iterable[str]) -> list[str]:
+    """Return every folder a typed name could mean, on the best reading of it.
+
+    Typing the whole path is a chore and remembering an account's exact
+    capitalisation is a memory test, so a leaf name is enough: "health" finds
+    "Personal/Health". Readings are tried in order — whole path, then leaf,
+    then any path ending — and only the best one that matches anything is
+    returned, so an exactly-typed folder is never made ambiguous by a
+    same-named leaf somewhere else in the tree.
+
+    Several folders can share a leaf name, so the caller gets a list and must
+    decide what to do with more than one; picking silently would file mail
+    somewhere the user did not name.
+    """
+    wanted = normalise_folder(typed).strip("/")
+    if not wanted:
+        return []
+    exact: list[str] = []
+    leaf: list[str] = []
+    ending: list[str] = []
+    for folder in folders:
+        path = normalise_folder(folder)
+        if path == wanted:
+            exact.append(folder)
+        elif path.rsplit("/", 1)[-1] == wanted:
+            leaf.append(folder)
+        elif path.endswith(f"/{wanted}"):
+            ending.append(folder)
+    return sorted(exact) or sorted(leaf) or sorted(ending)
 
 
 # Patterns are fnmatch globs, so square brackets are character classes and a

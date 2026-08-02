@@ -1,6 +1,12 @@
 import pytest
 
-from mail_triage.folders import account_prefix, folder_path, is_excluded, normalise_folder
+from mail_triage.folders import (
+    account_prefix,
+    folder_path,
+    is_excluded,
+    match_folders,
+    normalise_folder,
+)
 
 
 def test_account_prefix_truncates_uuid():
@@ -69,3 +75,41 @@ def test_escaped_gmail_pattern_does_not_match_a_plain_folder():
     """The unescaped form would match "G/anything"; the escaped form must not."""
     for folder in ("Gmail/Notes", "G/Something", "Parent/Child"):
         assert not is_excluded(folder, ["[[]Gmail]*"]), folder
+
+
+# --- Naming a folder at the prompt -------------------------------------------
+
+TREE = ["Personal/Health", "Work/Health", "Work/Meetings", "Orders", "Home Tech"]
+
+
+def test_a_typed_folder_need_not_match_the_accounts_capitalisation():
+    assert match_folders("orders", TREE) == ["Orders"]
+    assert match_folders("work/meetings", TREE) == ["Work/Meetings"]
+
+
+def test_a_leaf_name_finds_the_nested_folder():
+    """Nobody should have to type, or remember, the whole path."""
+    assert match_folders("meetings", TREE) == ["Work/Meetings"]
+
+
+def test_a_shared_leaf_name_returns_every_candidate():
+    assert match_folders("health", TREE) == ["Personal/Health", "Work/Health"]
+
+
+def test_a_whole_path_beats_a_leaf_elsewhere():
+    """An exactly-typed folder must never be made ambiguous by a namesake."""
+    tree = ["Health", "Personal/Health"]
+    assert match_folders("Health", tree) == ["Health"]
+
+
+def test_a_partial_path_ending_matches():
+    assert match_folders("work/health", TREE) == ["Work/Health"]
+
+
+def test_surrounding_slashes_and_spaces_are_forgiven():
+    assert match_folders("  /Home   Tech/ ", TREE) == ["Home Tech"]
+
+
+def test_an_unknown_name_matches_nothing():
+    assert match_folders("Helth", TREE) == []
+    assert match_folders("   ", TREE) == []

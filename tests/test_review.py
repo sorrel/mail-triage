@@ -461,10 +461,10 @@ def to_bin(subject="Junk newsletter", rowid=9):
                     "rule", action="delete")
 
 
-def test_the_table_shows_a_bin_proposal_as_going_to_the_bin():
+def test_the_table_shows_a_bin_proposal_as_a_deletion():
     table = render_table([to_bin()])
     assert "Junk newsletter" in table
-    assert "bin" in table.casefold()
+    assert "delete" in table.casefold()
 
 
 def test_accept_all_includes_bin_proposals_as_deletes():

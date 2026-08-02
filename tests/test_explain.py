@@ -132,7 +132,7 @@ def test_a_bin_rule_is_reported(tmp_path, monkeypatch):
         answered_at=1, candidates={},
     ))
     assert result.exit_code == 0
-    assert "bin" in result.output.casefold()
+    assert "deleted" in result.output.casefold()
 
 
 def test_a_leave_rule_is_reported(tmp_path, monkeypatch):

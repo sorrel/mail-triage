@@ -186,7 +186,7 @@ def rank_uncertain(
 
 
 def _question(uncertain: UncertainSender, ordered: list[tuple[str, float]]) -> str:
-    """Build the prompt. Four answers — no bin, which is deferred."""
+    """Build the prompt."""
     lines = [
         f"\n{uncertain.sender} — {uncertain.yearly_count} messages a year, "
         f"{uncertain.inbox_count} in the inbox now"
@@ -203,12 +203,16 @@ def _question(uncertain: UncertainSender, ordered: list[tuple[str, float]]) -> s
     if not ordered:
         lines.append("  (the folder this sender used no longer exists)")
     choices = f"1-{len(ordered)}, " if ordered else ""
-    # The bin answer is withheld entirely from billing senders — not merely
+    # The delete answer is withheld entirely from billing senders — not merely
     # rejected if typed, though ``ask`` does that too.
-    binning = "" if uncertain.sends_invoices else "[b]in these, "
+    #
+    # "d", never "b": "b" means *back* in the review loops, and a key that
+    # means "go back" in one prompt and "delete the lot" in another is a
+    # mistake waiting to happen.
+    deleting = "" if uncertain.sends_invoices else "[d]elete these, "
     lines.append(
-        f"Where should this sender's mail go? [{choices}a folder path, "
-        f"{binning}[l]eave alone, Enter to skip] "
+        f"Where should this sender's mail go? [{choices}a folder name, "
+        f"{deleting}[l]eave alone, Enter to skip] "
     )
     return "\n".join(lines)
 
@@ -216,14 +220,16 @@ def _question(uncertain: UncertainSender, ordered: list[tuple[str, float]]) -> s
 def ask(
     uncertain: UncertainSender,
     prompt: Callable[[str], str],
-    resolve_folder: Callable[[str], str | None],
+    match_folders: Callable[[str], list[str]],
     now: int | None = None,
 ) -> Rule | None:
     """Ask about one sender. Returns the rule to record, or ``None`` to skip.
 
-    ``resolve_folder`` maps a typed folder name to the account's real
-    capitalisation, or ``None`` if no such mailbox exists — a typo must not
-    create a rule pointing nowhere, so it is re-prompted rather than stored.
+    ``match_folders`` maps a typed folder name to every real mailbox it could
+    mean, in the account's own capitalisation. Nothing matching is a typo, and
+    a typo must not create a rule pointing nowhere, so it is re-prompted rather
+    than stored; several matches means a leaf name shared by more than one
+    folder, and the choice goes back to the user rather than being guessed.
     """
     if now is None:
         now = int(time.time())
@@ -233,8 +239,10 @@ def ask(
         answer = prompt(question).strip()
         if not answer:
             return None
-        if answer.casefold() in ("b", "bin") and not uncertain.sends_invoices:
-            # Journalled and undoable like any other move, never a hard delete.
+        if answer.casefold() in ("d", "delete") and not uncertain.sends_invoices:
+            # A move to the account's trash: journalled and undoable like any
+            # other move, never a hard delete. The stored action stays "bin"
+            # so rules answered before this wording still load.
             return Rule(sender=uncertain.sender, action="bin", folder=None,
                         answered_at=now, candidates=dict(uncertain.candidates))
         if answer.casefold() in ("l", "leave"):
@@ -247,13 +255,20 @@ def ask(
         if answer.isdigit() and 1 <= int(answer) <= len(ordered):
             folder = ordered[int(answer) - 1][0]
         else:
-            folder = resolve_folder(answer)
-            if folder is None:
+            matches = match_folders(answer)
+            if not matches:
                 question = (
                     f"No mailbox called '{answer}' in this account. "
                     "Try again, or press Enter to skip: "
                 )
                 continue
+            if len(matches) > 1:
+                question = (
+                    f"'{answer}' could be {', '.join(matches)}. "
+                    "Type more of the path, or press Enter to skip: "
+                )
+                continue
+            folder = matches[0]
         return Rule(sender=uncertain.sender, action="file", folder=folder,
                     answered_at=now, candidates=dict(uncertain.candidates))
 
@@ -261,7 +276,7 @@ def ask(
 def ask_all(
     uncertain: list[UncertainSender],
     prompt: Callable[[str], str],
-    resolve_folder: Callable[[str], str | None],
+    match_folders: Callable[[str], list[str]],
     rules_path: Path,
     now: int | None = None,
 ) -> list[Rule]:
@@ -273,7 +288,7 @@ def ask_all(
     answered: list[Rule] = []
     for item in uncertain:
         try:
-            rule = ask(item, prompt, resolve_folder, now=now)
+            rule = ask(item, prompt, match_folders, now=now)
         except (KeyboardInterrupt, EOFError):
             break
         if rule is None:

@@ -111,7 +111,7 @@ def render_table(
     for item in proposals:
         if not item.is_actionable:
             continue
-        destination = item.folder if item.folder is not None else "(bin — your rule)"
+        destination = item.folder if item.folder is not None else "(delete — your rule)"
         cell = ""
         if show_account:
             # "?" rather than a guess: a message from an account that is not
@@ -278,7 +278,7 @@ def review(proposals: list[Proposal], prompt: Callable[[str], str]) -> list[Deci
     index = 0
     while index < len(placed):
         item = placed[index]
-        destination = item.folder if item.folder is not None else "the bin"
+        destination = item.folder if item.folder is not None else "delete"
         reply = prompt(
             f"{_clip(item.message.subject, SUBJECT_WIDTH)} → {destination}? "
             "[y/n/d, b=back] "

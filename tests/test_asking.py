@@ -13,6 +13,7 @@ from mail_triage.asking import UncertainSender, ask, ask_all, rank_uncertain
 from mail_triage.config import Config
 from mail_triage.corpus import TrainingExample
 from mail_triage.envelope import MessageRow
+from mail_triage.folders import match_folders
 from mail_triage.model.classify import Classifier, Proposal
 from mail_triage.model.sender import SenderModel
 from mail_triage.model.store import TrainedModel
@@ -211,9 +212,9 @@ def scripted(answers):
     return prompt, asked
 
 
-def folder_lookup(name):
-    """Resolve a typed folder to its real capitalisation, or None if unknown."""
-    return {folder.casefold(): folder for folder in FOLDERS}.get(name.strip().casefold())
+def folder_lookup(name, folders=FOLDERS):
+    """Resolve a typed folder to the real mailboxes it could mean."""
+    return match_folders(name, folders)
 
 
 def test_choosing_a_candidate_by_number_yields_a_file_rule():
@@ -252,6 +253,22 @@ def test_a_typed_folder_is_stored_with_the_accounts_capitalisation():
     assert ask(uncertain_sender(), prompt, folder_lookup, now=0).folder == "Parent/Keep"
 
 
+def test_a_leaf_name_is_enough_to_name_a_nested_folder():
+    """Typing the whole path is a chore; "Keep" means "Parent/Keep"."""
+    prompt, _ = scripted(["keep"])
+    assert ask(uncertain_sender(), prompt, folder_lookup, now=0).folder == "Parent/Keep"
+
+
+def test_a_leaf_name_shared_by_two_folders_is_put_back_to_the_user():
+    """Guessing between them would file mail somewhere the user did not name."""
+    folders = ["Personal/Health", "Work/Health", "Orders"]
+    lookup = lambda name: folder_lookup(name, folders)  # noqa: E731
+    prompt, asked = scripted(["Health", "Work/Health"])
+    rule = ask(uncertain_sender(), prompt, lookup, now=0)
+    assert rule.folder == "Work/Health"
+    assert "Personal/Health" in asked[1] and "Work/Health" in asked[1]
+
+
 def test_a_typo_is_re_prompted_rather_than_stored():
     """A typo must not create a rule pointing nowhere."""
     prompt, asked = scripted(["Hoem/Kep", "Parent/Keep"])
@@ -288,14 +305,20 @@ def test_the_answer_records_what_was_on_offer():
 
 # --- The bin answer, unblocked 27 July 2026 by invoice detection --------------
 
-def test_binning_a_sender_is_an_offered_answer():
+def test_deleting_a_senders_mail_is_an_offered_answer():
     prompt, asked = scripted([""])
     ask(uncertain_sender(), prompt, folder_lookup, now=0)
-    assert "[b]in" in asked[0]
+    assert "[d]elete" in asked[0]
 
 
-def test_choosing_to_bin_yields_a_bin_rule():
-    prompt, _ = scripted(["b"])
+def test_the_delete_answer_is_never_bound_to_b():
+    """"b" means *back* in the review loops; it must not delete here."""
+    prompt, _ = scripted(["b", ""])
+    assert ask(uncertain_sender(), prompt, folder_lookup, now=0) is None
+
+
+def test_choosing_to_delete_yields_a_bin_rule():
+    prompt, _ = scripted(["d"])
     rule = ask(uncertain_sender(), prompt, folder_lookup, now=0)
     assert rule.action == "bin"
     assert rule.folder is None
@@ -309,12 +332,12 @@ def test_a_billing_sender_is_never_offered_the_bin_answer():
                               candidates={"Parent/Keep": 12.0}, yearly_count=27,
                               inbox_count=3, kind="inconsistent", sends_invoices=True)
     ask(billing, prompt, folder_lookup, now=0)
-    assert "[b]in" not in asked[0]
+    assert "[d]elete" not in asked[0]
 
 
-def test_a_billing_sender_typing_b_does_not_get_a_bin_rule():
+def test_a_billing_sender_typing_d_does_not_get_a_bin_rule():
     """Withholding the option from the prompt is not enough on its own."""
-    prompt, _ = scripted(["b", ""])
+    prompt, _ = scripted(["d", ""])
     billing = UncertainSender(sender="accounts@shop.example",
                               candidates={"Parent/Keep": 12.0}, yearly_count=27,
                               inbox_count=3, kind="inconsistent", sends_invoices=True)
