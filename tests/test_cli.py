@@ -107,8 +107,10 @@ def test_a_database_that_never_settles_is_reported_not_thrown(tmp_path, monkeypa
     assert not isinstance(result.exception, SnapshotError)
 
 
-def _stub_config(tmp_path):
-    return Config(account_url_prefix="imap://AAAAAAAA", local_dir=tmp_path / "local")
+def _stub_config(tmp_path, **overrides):
+    values = dict(account_url_prefix="imap://AAAAAAAA", local_dir=tmp_path / "local")
+    values.update(overrides)
+    return Config(**values)
 
 
 def test_learn_reports_counts_and_writes_the_model(fixture_db, tmp_path, monkeypatch):
@@ -1046,3 +1048,61 @@ def test_learn_reports_the_corrections_it_folded_in(tmp_path, monkeypatch):
     result = runner.invoke(cli, ["learn", "--no-drift"])
     assert result.exit_code == 0
     assert "Including 1 correction at 10× weight." in result.output
+
+
+# --- Unattended filing: triage --auto (Task 14) ------------------------------
+
+def test_auto_files_confident_mail_without_asking(tmp_path, monkeypatch):
+    runner, mail = _prepare_unplaceable_run(tmp_path, monkeypatch)
+    # The fixture's filable message reads 0.80, below the 0.9 default, so the
+    # threshold is lowered to put it in range rather than inflating the
+    # fixture's history until it clears a number.
+    monkeypatch.setattr(
+        cli_module, "load_config", lambda: _stub_config(tmp_path, auto_threshold=0.75)
+    )
+    # No input at all: an unattended run must never block on a prompt.
+    result = runner.invoke(cli, ["triage", "--auto"], input="")
+    assert result.exit_code == 0
+    assert [entry[1] for entry in mail.moved] == ["Projects"]
+    assert "Filing 1 message" in result.output
+    assert "Reverse this with" in result.output
+
+
+def test_auto_leaves_everything_it_cannot_place(tmp_path, monkeypatch):
+    """The unplaceable message is the one --auto must not touch."""
+    runner, mail = _prepare_unplaceable_run(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module, "load_config", lambda: _stub_config(tmp_path, auto_threshold=0.75)
+    )
+    runner.invoke(cli, ["triage", "--auto"], input="")
+    assert [entry[0] for entry in mail.moved] == [900]
+
+
+def test_auto_and_dry_run_together_are_refused(tmp_path, monkeypatch):
+    runner, mail = _prepare_unplaceable_run(tmp_path, monkeypatch)
+    result = runner.invoke(cli, ["triage", "--auto", "--dry-run"])
+    assert result.exit_code != 0
+    assert "--auto" in result.output and "--dry-run" in result.output
+    assert mail.moved == []
+
+
+def test_auto_does_not_ask_about_uncertain_senders(tmp_path, monkeypatch):
+    """Asking is a conversation, and there is nobody there to have it."""
+    runner, _ = _prepare_unplaceable_run(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module, "load_config", lambda: _stub_config(tmp_path, auto_threshold=0.75)
+    )
+    result = runner.invoke(cli, ["triage", "--auto"], input="")
+    assert result.exit_code == 0
+    assert "senders I can't call" not in result.output
+
+
+def test_auto_with_nothing_confident_enough_moves_nothing(tmp_path, monkeypatch):
+    runner, mail = _prepare_unplaceable_run(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module, "load_config", lambda: _stub_config(tmp_path, auto_threshold=1.01)
+    )
+    result = runner.invoke(cli, ["triage", "--auto"], input="")
+    assert result.exit_code == 0
+    assert mail.moved == []
+    assert "Nothing was confident enough" in result.output
