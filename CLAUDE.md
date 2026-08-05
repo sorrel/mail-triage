@@ -50,6 +50,7 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `review.py` | Proposal table and the confirm loops |
 | `execute.py` | The only module that moves mail |
 | `deletion.py` | Deletion as negative evidence, counted per account |
+| `unsubscribe.py` | Rank lists worth leaving; send the request (the only sender) |
 | `journal.py` | Run journal and undo |
 | `sizes.py` | Measure disk and envelope size per mailbox |
 | `size_report.py` | Render the size grids |

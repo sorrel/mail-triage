@@ -52,6 +52,7 @@ class MailInterface(Protocol):
     ) -> None: ...
     def message_headers(self, message_id: int) -> dict[str, str]: ...
     def message_key(self, message_id: int, source_folder: str, account: str) -> str: ...
+    def send_mail(self, to_address: str, subject: str, body: str) -> None: ...
 
 
 def _escape_applescript_string(value: str) -> str:
@@ -283,6 +284,37 @@ class AppleScriptMail:
         )
         return _run(script)
 
+    def _send_script(self, to_address: str, subject: str, body: str) -> str:
+        """The AppleScript for one outgoing message.
+
+        Every argument is escaped, unlike elsewhere in this module where the
+        interpolated values are the user's own folder and account names. The
+        recipient here is lifted from a ``List-Unsubscribe`` header, which the
+        *sender* wrote: an unescaped quote in it would close the string literal
+        and let the rest of the header become script. Escaping is the whole
+        reason this is a separate, testable method.
+        """
+        return (
+            'tell application "Mail"\n'
+            "  set newMessage to make new outgoing message with properties "
+            f'{{subject:"{_escape_applescript_string(subject)}", '
+            f'content:"{_escape_applescript_string(body)}", visible:false}}\n'
+            "  tell newMessage\n"
+            "    make new to recipient at end of to recipients with properties "
+            f'{{address:"{_escape_applescript_string(to_address)}"}}\n'
+            "  end tell\n"
+            "  send newMessage\n"
+            "end tell"
+        )
+
+    def send_mail(self, to_address: str, subject: str, body: str) -> None:
+        """Send a message from Mail's default account.
+
+        The only method in mail-triage that sends anything. Callers must have
+        an explicit per-message confirmation in hand before calling it.
+        """
+        _run(self._send_script(to_address, subject, body))
+
 
 def _parse_headers(raw: str) -> dict[str, str]:
     """Parse RFC-822 headers, joining folded continuation lines.
@@ -428,3 +460,8 @@ class FakeMail:
 
     def message_headers(self, message_id: int) -> dict[str, str]:
         return dict(self._headers.get(message_id, {}))
+
+    def send_mail(self, to_address: str, subject: str, body: str) -> None:
+        # Body deliberately not recorded: what matters to a test is that
+        # exactly one message went to exactly one address.
+        self.sent.append((to_address, subject))

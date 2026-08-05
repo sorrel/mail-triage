@@ -1106,3 +1106,100 @@ def test_auto_with_nothing_confident_enough_moves_nothing(tmp_path, monkeypatch)
     assert result.exit_code == 0
     assert mail.moved == []
     assert "Nothing was confident enough" in result.output
+
+
+# --- unsubscribe ----------------------------------------------------------
+#
+# The only command that sends mail, so the confirm loop is tested at the CLI
+# level rather than only in test_unsubscribe.py: a mis-wired prompt would
+# send real mail whilst every unit test still passed.
+
+
+def _stub_candidates(monkeypatch, options):
+    monkeypatch.setattr(
+        cli_module, "find_candidates", lambda reader, config, mail, limit: list(options)
+    )
+
+
+def _sending_runner(tmp_path, monkeypatch, options):
+    from mail_triage.mail_app import FakeMail
+
+    mail = FakeMail(inbox=[], mailboxes=[])
+    monkeypatch.setattr(cli_module, "load_config", lambda: _stub_config(tmp_path))
+    monkeypatch.setattr(cli_module, "AppleScriptMail", lambda: mail)
+    monkeypatch.setattr(cli_module, "snapshot_database", lambda source, work: source)
+    monkeypatch.setattr(cli_module, "EnvelopeReader", lambda path: _NullReader())
+    _stub_candidates(monkeypatch, options)
+    return CliRunner(), mail
+
+
+class _NullReader:
+    def close(self):
+        pass
+
+
+def _option(sender="news@x.example", **overrides):
+    from mail_triage.unsubscribe import UnsubscribeOption
+
+    values = dict(
+        sender=sender,
+        domain=sender.split("@", 1)[1],
+        method="mailto",
+        target=f"leave@{sender.split('@', 1)[1]}",
+        message_count=4,
+        unread_count=4,
+        deleted_count=22,
+        account="iCloud",
+    )
+    values.update(overrides)
+    return UnsubscribeOption(**values)
+
+
+def test_unsubscribe_dry_run_sends_nothing(tmp_path, monkeypatch):
+    runner, mail = _sending_runner(tmp_path, monkeypatch, [_option()])
+    result = runner.invoke(cli, ["unsubscribe", "--dry-run"])
+    assert result.exit_code == 0
+    assert mail.sent == []
+    assert "Would unsubscribe via leave@x.example" in result.output
+    assert "22 binned" in result.output
+
+
+def test_unsubscribe_needs_a_yes(tmp_path, monkeypatch):
+    runner, mail = _sending_runner(tmp_path, monkeypatch, [_option()])
+    result = runner.invoke(cli, ["unsubscribe"], input="n\n")
+    assert result.exit_code == 0
+    assert mail.sent == []
+    assert "Sent 0, skipped 1." in result.output
+
+
+def test_unsubscribe_defaults_to_no_on_a_bare_return(tmp_path, monkeypatch):
+    runner, mail = _sending_runner(tmp_path, monkeypatch, [_option()])
+    result = runner.invoke(cli, ["unsubscribe"], input="\n")
+    assert result.exit_code == 0
+    assert mail.sent == []
+
+
+def test_unsubscribe_sends_on_a_yes(tmp_path, monkeypatch):
+    runner, mail = _sending_runner(tmp_path, monkeypatch, [_option()])
+    result = runner.invoke(cli, ["unsubscribe"], input="y\n")
+    assert result.exit_code == 0
+    assert mail.sent == [("leave@x.example", "unsubscribe")]
+    assert "Sent 1, skipped 0." in result.output
+
+
+def test_unsubscribe_asks_per_sender(tmp_path, monkeypatch):
+    """One 'y' must not carry over to the next sender."""
+    options = [_option("a@x.example"), _option("b@y.example")]
+    runner, mail = _sending_runner(tmp_path, monkeypatch, options)
+    result = runner.invoke(cli, ["unsubscribe"], input="y\nn\n")
+    assert result.exit_code == 0
+    assert mail.sent == [("leave@x.example", "unsubscribe")]
+
+
+def test_unsubscribe_never_offers_an_http_target(tmp_path, monkeypatch):
+    http = _option(method="http", target="https://x.example/u")
+    runner, mail = _sending_runner(tmp_path, monkeypatch, [http])
+    result = runner.invoke(cli, ["unsubscribe"], input="y\n")
+    assert result.exit_code == 0
+    assert mail.sent == []
+    assert "do it yourself" in result.output

@@ -352,6 +352,46 @@ names in source.
 | `triage --auto` | Threshold-based, unattended |
 | `undo <run-id>` | Reverse a batch |
 | `explain <sender>` | Show why mail from a sender lands where it does |
+| `unsubscribe` | Suggest lists worth leaving; send the request one at a time |
+| `unsubscribe --dry-run` | List the candidates; send nothing |
+
+## Unsubscribe
+
+The one place mail-triage *sends* mail, added at the user's request of 26 July
+2026. The original spec forbade sending outright; this is the amendment.
+
+**Candidates** are senders with mail currently in one of the triaged inboxes,
+ranked by how thoroughly their mail is ignored. Two signals feed that, both
+drawn from the same recent window:
+
+- mail sitting unread in the inbox, and
+- **mail that was deleted** — the user's addition of 5 August 2026. This is the
+  stronger of the two. Unread only catches what you have not got round to,
+  whereas binning is a decision; and by the time you have binned it, the
+  message has left the inbox where a read-flag count would find it.
+  `deletion.build_deletion_index` already maintains these counts per sender for
+  the filing veto, so the same index is reused rather than a second notion of
+  "ignored" being invented. Counts stay **within each account**, exactly as
+  they do for the veto: a sender binned in one account and read in another is
+  not being ignored.
+
+Ranking leads on the ignored *count*, not the share, so a list binned thirty
+times outranks a stranger whose single message is merely unopened — a 100%
+share of one message is not evidence.
+
+**The header fetch is the slow part.** `List-Unsubscribe` is not in the
+database and each read is an AppleScript round trip, so the ranking on counts
+happens first and only the top `--limit` senders (default 20) are asked about.
+Senders whose mail carries no such header simply drop out.
+
+**Sending** requires an explicit `y` for that specific sender; anything else
+skips, and the prompt defaults to no. Only `mailto:` targets are sent. HTTP
+one-click unsubscribe (RFC 8058) stays unsupported: it would mean arbitrary
+outbound web requests to an address the sender chose. The target address comes
+from a header the *sender* wrote, so it is treated as untrusted — checked
+against an address shape before sending, and escaped before it reaches
+AppleScript, unlike the folder and account names elsewhere in that module,
+which are the user's own.
 
 ## Error handling
 
