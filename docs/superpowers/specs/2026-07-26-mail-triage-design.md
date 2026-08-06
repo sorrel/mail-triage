@@ -393,11 +393,19 @@ the provider correctly observing that the request identified nobody. Note how
 this fails: the send succeeds, the tool says "Sent", and the rejection arrives
 seconds later as a bounce. A reported send is not a completed unsubscribe.
 
-**Sending** requires an explicit `y` for that specific sender; anything else
-skips, and the prompt defaults to no. `--sender` narrows the offer to one
-address, which is how a single deliberate send should be aimed — the ranking
-shifts as mail arrives, so answering the first prompt aims at whatever
-happens to be top that minute.
+**The interaction is list-then-choose** (revised 6 August 2026). The whole
+ranked list is printed, numbered, and the user picks from it — several at once
+(`1,4`, `1-3`) — because deciding about a list is one job, not one per sender.
+The first implementation walked the ranking asking about each sender in turn,
+which meant seventeen answers to reach the one you wanted; the ranking is a
+view, not a queue.
+
+Selecting a number *is* the explicit per-sender consent this design requires.
+The selection is then shown back and confirmed as a set, which is the second
+gate rather than the first. Picking an HTTP-only sender stops the run rather
+than being skipped over: it misreads the list, and sending the others whilst
+mentioning it afterwards would bury that. `--sender` narrows the list before
+any of this, which is how a single deliberate send is aimed.
 
 **Known defect (6 August 2026):** Mail leaves a copy of the sent message in
 Drafts. The first live send landed correctly in Sent Messages on the right

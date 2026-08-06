@@ -538,3 +538,95 @@ def test_send_mail_escapes_its_arguments():
 
     assert '\\"' in script
     assert 'a"b@x.example' not in script
+
+
+# --- Choosing from the list -----------------------------------------------
+#
+# The user's expectation (6 August 2026): type the command, get the whole
+# list, choose from it. Walking down a ranking asking seventeen questions to
+# reach the one you wanted is the wrong shape — the ranking is a view, not a
+# queue.
+
+
+def test_selection_accepts_a_single_number():
+    from mail_triage.unsubscribe import parse_selection
+
+    assert parse_selection("2", 5) == [2]
+
+
+def test_selection_accepts_a_comma_separated_list():
+    from mail_triage.unsubscribe import parse_selection
+
+    assert parse_selection("1,4,5", 5) == [1, 4, 5]
+
+
+def test_selection_accepts_a_range():
+    from mail_triage.unsubscribe import parse_selection
+
+    assert parse_selection("2-4", 5) == [2, 3, 4]
+
+
+def test_selection_mixes_ranges_and_numbers_and_deduplicates():
+    from mail_triage.unsubscribe import parse_selection
+
+    assert parse_selection("1, 3-5, 4", 6) == [1, 3, 4, 5]
+
+
+def test_selection_is_empty_for_nothing_typed():
+    from mail_triage.unsubscribe import parse_selection
+
+    assert parse_selection("", 5) == []
+    assert parse_selection("   ", 5) == []
+
+
+def test_selection_rejects_a_number_off_the_end():
+    """Silently ignoring it would unsubscribe from something unintended."""
+    from mail_triage.unsubscribe import SelectionError, parse_selection
+
+    with pytest.raises(SelectionError, match="1 and 3"):
+        parse_selection("4", 3)
+
+
+def test_selection_rejects_nonsense():
+    from mail_triage.unsubscribe import SelectionError, parse_selection
+
+    with pytest.raises(SelectionError):
+        parse_selection("all of them", 3)
+
+
+def test_selection_rejects_a_backwards_range():
+    from mail_triage.unsubscribe import SelectionError, parse_selection
+
+    with pytest.raises(SelectionError):
+        parse_selection("4-2", 5)
+
+
+def test_selection_rejects_zero():
+    """The list is one-based on screen; 0 means the user miscounted."""
+    from mail_triage.unsubscribe import SelectionError, parse_selection
+
+    with pytest.raises(SelectionError):
+        parse_selection("0", 5)
+
+
+def test_the_table_numbers_every_candidate_and_shows_the_counts():
+    from mail_triage.unsubscribe import render_candidates
+
+    table = render_candidates([
+        option("news@x.example", messages=1, unread=1, deleted=22),
+        option("list@y.example", messages=0, unread=0, deleted=8, method="http"),
+    ])
+
+    assert " 1  " in table
+    assert " 2  " in table
+    assert "news@x.example" in table
+    assert "22" in table
+    # The method matters to the choice: an http-only sender cannot be sent to.
+    assert "http" in table.casefold()
+
+
+def test_the_table_marks_which_senders_cannot_be_sent_to():
+    from mail_triage.unsubscribe import render_candidates
+
+    table = render_candidates([option("a@x.example", method="http")])
+    assert "browser" in table.casefold() or "yourself" in table.casefold()

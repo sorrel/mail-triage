@@ -140,7 +140,7 @@ running `triage --dry-run` first to see what it would do.
 | `rules` | List the answers you have given about senders |
 | `rules --forget <sender>` | Remove one sender's rule |
 | `explain <sender>` | Show why that sender's mail goes where it does |
-| `unsubscribe` | Suggest lists worth leaving, and send the request if you agree |
+| `unsubscribe` | List lists worth leaving; unsubscribe from the ones you pick |
 | `unsubscribe --dry-run` | List the candidates; send nothing |
 | `unsubscribe --limit N` | How many senders to fetch headers for (default 20) |
 | `unsubscribe --sender TEXT` | Only offer senders whose address contains TEXT |
@@ -149,13 +149,20 @@ running `triage --dry-run` first to see what it would do.
 
 ## Getting less mail
 
-`unsubscribe` is the only command that sends anything. It ranks the senders
-whose mail you most reliably ignore, and offers them one at a time:
+`unsubscribe` is the only command that sends anything. It prints the senders
+whose mail you most reliably ignore, and you choose from the list:
 
 ```
-news@list.example [iCloud] — 4 in the inbox, 4 unread, 22 binned (96% ignored)
-  Unsubscribe via leave@list.example? [y/N]
+ 1  news@list.example    iCloud  22 binned, 0 unread  96%   mailto
+ 2  offers@shop.example  iCloud  19 binned, 1 unread  100%  mailto
+ 3  digest@site.example  Gmail    8 binned, 0 unread  100%  http — open in a browser yourself
+
+3 candidates, 2 of them sendable (1 is HTTP-only — open those yourself).
+Which to unsubscribe from? (numbers, or Enter for none): 1,2
 ```
+
+Pick several at once — `1,4` or `1-3`. The selection is shown back to you and
+confirmed as a set before anything is sent, and Enter on its own sends nothing.
 
 **Deleted mail is the main evidence.** Unread-in-the-inbox only sees what you
 have not got round to; the mail you binned is a decision, and it has already
@@ -167,13 +174,18 @@ sender you bin in one account and read in another is not mistaken for noise.
 first prompt when you mean to send exactly one: the ranking moves as mail
 arrives, so position is not a reliable way to aim.
 
-Nothing is sent without an explicit `y` for that particular sender — the
-prompt defaults to no, and `--dry-run` sends nothing at all. Only `mailto:`
+Nothing is sent for a sender you did not name, the confirmation defaults to
+no, and `--dry-run` sends nothing at all. Only `mailto:`
 unsubscribe targets are used; HTTP one-click unsubscribe is deliberately
 unsupported, as it would mean firing arbitrary web requests at an address the
 sender chose. Fetching the `List-Unsubscribe` header costs an AppleScript
 round trip per sender, which is why `--limit` exists and why the ranking
 happens before the fetching.
+
+**A sent request is not a completed unsubscribe.** The provider may reject it,
+and the rejection arrives seconds later as a bounce from `mailer-daemon` — the
+first live send was rejected that way and reported success. Check your inbox
+after a batch.
 
 ## Where the space has gone
 
