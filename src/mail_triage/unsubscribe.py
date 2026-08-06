@@ -34,6 +34,7 @@ import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, replace
+from urllib.parse import parse_qsl, unquote
 
 from mail_triage.config import Config, Source
 from mail_triage.corpus import normalise_sender
@@ -60,6 +61,11 @@ class UnsubscribeOption:
     unread_count: int
     deleted_count: int = 0
     account: str = ""
+    # What to put in the request. Not decoration: providers match the token
+    # carried here against the subscription, so the wrong one is a rejected
+    # request. See ``parse_list_unsubscribe``.
+    subject: str = "unsubscribe"
+    body: str = "unsubscribe"
 
     @property
     def ignored_count(self) -> int:
@@ -76,16 +82,48 @@ class UnsubscribeOption:
         return self.ignored_count / self.seen_count if self.seen_count else 0.0
 
 
-def parse_list_unsubscribe(header: str) -> tuple[str, str] | None:
-    """Extract a target from a List-Unsubscribe header, preferring mailto."""
+@dataclass(frozen=True)
+class UnsubscribeTarget:
+    """Where an unsubscribe request goes, and what it must say."""
+
+    method: str  # mailto | http
+    target: str
+    subject: str = "unsubscribe"
+    body: str = "unsubscribe"
+
+
+def parse_list_unsubscribe(header: str) -> UnsubscribeTarget | None:
+    """Extract a target from a List-Unsubscribe header, preferring mailto.
+
+    **A mailto URL's parameters are part of the request, not decoration.**
+    The first live unsubscribe (6 August 2026) discarded them and bounced:
+    ``554 Message rejected: The unsubscribe request has invalid form``. Its
+    header was ``<mailto:unsubscribe-ENG@…?subject=hmv-prod/unsub/CgxnVLz…>``
+    — the subject *is* the subscriber token. A request without it identifies
+    nobody, which is exactly what the provider said.
+
+    Parameters are percent-decoded per RFC 6068. ``subject`` and ``body``
+    default to the word "unsubscribe" when the URL carries neither, which is
+    the convention for the plain ``<mailto:leave@list>`` form.
+    """
     targets = _TARGET.findall(header or "")
     for target in targets:
         if target.casefold().startswith("mailto:"):
-            address = target[len("mailto:") :]
-            return "mailto", address.split("?", 1)[0]
+            address, _, query = target[len("mailto:") :].partition("?")
+            # keep_blank_values: a deliberate "?subject=" with nothing after
+            # it is the sender asking for an empty subject, not an absent one.
+            fields = dict(parse_qsl(query, keep_blank_values=True))
+            return UnsubscribeTarget(
+                method="mailto",
+                target=unquote(address),
+                subject=fields.get("subject", "unsubscribe"),
+                body=fields.get("body", "unsubscribe"),
+            )
     for target in targets:
         if target.casefold().startswith("http"):
-            return "http", target
+            # An http target's query string belongs to the URL; splitting it
+            # off the way a mailto's is split would break the link.
+            return UnsubscribeTarget(method="http", target=target)
     return None
 
 
@@ -239,8 +277,15 @@ def find_candidates(
         parsed = parse_list_unsubscribe(headers.get("List-Unsubscribe", ""))
         if parsed is None:
             continue
-        method, target = parsed
-        options.append(replace(option, method=method, target=target))
+        options.append(
+            replace(
+                option,
+                method=parsed.method,
+                target=parsed.target,
+                subject=parsed.subject,
+                body=parsed.body,
+            )
+        )
     return rank_candidates(options)
 
 
@@ -252,4 +297,4 @@ def send_unsubscribe(option: UnsubscribeOption, mail: MailInterface) -> None:
         )
     if not _ADDRESS.match(option.target):
         raise ValueError(f"Refusing to send: {option.target!r} is not an email address.")
-    mail.send_mail(option.target, "unsubscribe", "unsubscribe")
+    mail.send_mail(option.target, option.subject, option.body)

@@ -31,7 +31,8 @@ def make_config(tmp_path, **overrides):
     )
 
 
-def option(sender, *, messages=10, unread=9, deleted=0, method="mailto"):
+def option(sender, *, messages=10, unread=9, deleted=0, method="mailto",
+           subject="unsubscribe"):
     domain = sender.split("@", 1)[1]
     return UnsubscribeOption(
         sender=sender,
@@ -41,6 +42,7 @@ def option(sender, *, messages=10, unread=9, deleted=0, method="mailto"):
         message_count=messages,
         unread_count=unread,
         deleted_count=deleted,
+        subject=subject,
     )
 
 
@@ -48,27 +50,52 @@ def option(sender, *, messages=10, unread=9, deleted=0, method="mailto"):
 
 
 def test_parses_a_mailto_target():
-    assert parse_list_unsubscribe("<mailto:leave@list.example>") == (
-        "mailto",
-        "leave@list.example",
-    )
+    target = parse_list_unsubscribe("<mailto:leave@list.example>")
+    assert (target.method, target.target) == ("mailto", "leave@list.example")
 
 
 def test_prefers_mailto_over_http():
     header = "<https://list.example/u?x=1>, <mailto:leave@list.example>"
-    assert parse_list_unsubscribe(header) == ("mailto", "leave@list.example")
+    target = parse_list_unsubscribe(header)
+    assert (target.method, target.target) == ("mailto", "leave@list.example")
 
 
 def test_returns_http_when_that_is_all_there_is():
-    assert parse_list_unsubscribe("<https://list.example/u>") == (
-        "http",
-        "https://list.example/u",
-    )
+    target = parse_list_unsubscribe("<https://list.example/u>")
+    assert (target.method, target.target) == ("http", "https://list.example/u")
+    # An http target's query string is part of the URL, not something to split.
+    assert parse_list_unsubscribe("<https://l.example/u?x=1>").target == "https://l.example/u?x=1"
 
 
-def test_strips_mailto_query_parameters():
-    header = "<mailto:leave@list.example?subject=unsubscribe>"
-    assert parse_list_unsubscribe(header) == ("mailto", "leave@list.example")
+def test_keeps_the_subject_parameter_because_it_carries_the_token():
+    """Stripping ?subject= is what made the first live unsubscribe bounce.
+
+    Sent 6 August 2026 to a real list, rejected by the provider with
+    "554 Message rejected: The unsubscribe request has invalid form". Its
+    header was <mailto:unsubscribe-ENG@...?subject=hmv-prod/unsub/CgxnVLz...>
+    — the subject *is* the subscriber token, not a courtesy label, and a
+    request without it identifies nobody.
+    """
+    target = parse_list_unsubscribe("<mailto:leave@list.example?subject=tok/en-123>")
+    assert target.method == "mailto"
+    assert target.target == "leave@list.example"
+    assert target.subject == "tok/en-123"
+
+
+def test_decodes_percent_escapes_in_parameters():
+    target = parse_list_unsubscribe("<mailto:leave@x.example?subject=a%20b%2Fc>")
+    assert target.subject == "a b/c"
+
+
+def test_keeps_the_body_parameter_too():
+    header = "<mailto:leave@x.example?subject=s&body=confirm%20me>"
+    target = parse_list_unsubscribe(header)
+    assert (target.subject, target.body) == ("s", "confirm me")
+
+
+def test_defaults_to_the_word_unsubscribe_when_no_parameters_are_given():
+    target = parse_list_unsubscribe("<mailto:leave@x.example>")
+    assert (target.subject, target.body) == ("unsubscribe", "unsubscribe")
 
 
 def test_returns_none_for_junk():
@@ -427,6 +454,35 @@ def test_sending_uses_the_mail_bridge():
     mail = FakeMail(inbox=[], mailboxes=[])
     send_unsubscribe(option("a@x.example", method="mailto"), mail)
     assert mail.sent == [("leave@x.example", "unsubscribe")]
+
+
+def test_sending_uses_the_subject_the_sender_asked_for():
+    """The provider matches on it; the wrong subject is a rejected request."""
+    mail = FakeMail(inbox=[], mailboxes=[])
+    send_unsubscribe(option("a@x.example", subject="tok/en-123"), mail)
+    assert mail.sent == [("leave@x.example", "tok/en-123")]
+
+
+def test_the_candidate_carries_the_subject_from_the_header(tmp_path):
+    path = tmp_path / "Envelope Index"
+    build_fixture_db(
+        path,
+        [
+            {"sender": "news@x.example", "subject": "One", "date_sent": NOW - DAY,
+             "mailbox_url": f"{PREFIX}INBOX", "read": 0, "rowid": 1},
+        ],
+    )
+    reader = EnvelopeReader(path)
+    mail = FakeMail(
+        inbox=[1],
+        mailboxes=[],
+        headers={1: {"List-Unsubscribe": "<mailto:leave@x.example?subject=tok-9>"}},
+    )
+
+    candidates = find_candidates(reader, make_config(tmp_path), mail, limit=10, now=NOW)
+
+    assert candidates[0].subject == "tok-9"
+    reader.close()
 
 
 def test_refuses_to_send_to_an_http_target():
