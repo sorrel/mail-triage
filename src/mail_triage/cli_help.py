@@ -23,6 +23,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Look at what you have", ("accounts", "size")),
     ("Teach it", ("learn", "rules", "explain")),
     ("File your mail", ("triage",)),
+    ("Get less of it", ("unsubscribe",)),
     ("Afterwards", ("runs", "undo")),
 )
 

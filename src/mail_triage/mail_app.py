@@ -50,8 +50,11 @@ class MailInterface(Protocol):
         message_key: str | None = None,
         source_account: str | None = None,
     ) -> None: ...
-    def message_headers(self, message_id: int) -> dict[str, str]: ...
+    def message_headers(
+        self, message_id: int, mailbox: str | None = None, account: str | None = None
+    ) -> dict[str, str]: ...
     def message_key(self, message_id: int, source_folder: str, account: str) -> str: ...
+    def send_mail(self, to_address: str, subject: str, body: str) -> None: ...
 
 
 def _escape_applescript_string(value: str) -> str:
@@ -248,15 +251,36 @@ class AppleScriptMail:
                 str(error), message_id, folder, account, source_folder
             ) from error
 
-    def message_headers(self, message_id: int) -> dict[str, str]:
-        """Fetch raw headers. Mail's database does not store these."""
-        script = (
+    def _headers_script(
+        self, message_id: int, mailbox: str | None, account: str | None
+    ) -> str:
+        """The AppleScript for one header read.
+
+        With no mailbox, this reads Mail's unified ``inbox``, which is what
+        the do-not-file guards want: they are looking at mail that is, by
+        definition, still in an inbox. A named mailbox is needed for anything
+        that has left one — the unsubscribe candidates drawn from the Trash,
+        whose whole qualification is that nothing of theirs remains in the
+        inbox for the unified query to find.
+        """
+        if mailbox is None:
+            target = "inbox"
+        else:
+            target = f'mailbox "{_escape_applescript_string(mailbox)}"'
+            if account is not None:
+                target += f' of account "{_escape_applescript_string(account)}"'
+        return (
             'tell application "Mail"\n'
-            f"  set theMessage to (first message of inbox whose id is {message_id})\n"
+            f"  set theMessage to (first message of {target} whose id is {message_id})\n"
             "  return all headers of theMessage\n"
             "end tell"
         )
-        return _parse_headers(_run(script))
+
+    def message_headers(
+        self, message_id: int, mailbox: str | None = None, account: str | None = None
+    ) -> dict[str, str]:
+        """Fetch raw headers. Mail's database does not store these."""
+        return _parse_headers(_run(self._headers_script(message_id, mailbox, account)))
 
     def message_key(self, message_id: int, source_folder: str, account: str) -> str:
         """Return the RFC-822 Message-ID, which survives moves.
@@ -282,6 +306,50 @@ class AppleScriptMail:
             "end tell"
         )
         return _run(script)
+
+    def _send_script(self, to_address: str, subject: str, body: str) -> str:
+        """The AppleScript for one outgoing message.
+
+        Every argument is escaped, unlike elsewhere in this module where the
+        interpolated values are the user's own folder and account names. The
+        recipient here is lifted from a ``List-Unsubscribe`` header, which the
+        *sender* wrote: an unescaped quote in it would close the string literal
+        and let the rest of the header become script. Escaping is the whole
+        reason this is a separate, testable method.
+
+        ``delete newMessage`` follows the send because the outgoing message
+        object outlives it, and Mail's autosave then writes it to Drafts —
+        observed on the first live send (6 August 2026), where the sent copy
+        reached Sent Messages at 19:48:56 and a stray draft appeared in the
+        same account at 19:49:25. Deleting the object before the autosave
+        timer fires prevents the draft rather than tidying it up afterwards,
+        which matters: the alternative is hunting a message in the Drafts
+        mailbox and deleting it, and deleting stored mail on a guess is a far
+        worse failure mode than leaving a draft behind. ``delete`` applies to
+        the outgoing message — the compose object — not to anything in a
+        mailbox.
+        """
+        return (
+            'tell application "Mail"\n'
+            "  set newMessage to make new outgoing message with properties "
+            f'{{subject:"{_escape_applescript_string(subject)}", '
+            f'content:"{_escape_applescript_string(body)}", visible:false}}\n'
+            "  tell newMessage\n"
+            "    make new to recipient at end of to recipients with properties "
+            f'{{address:"{_escape_applescript_string(to_address)}"}}\n'
+            "  end tell\n"
+            "  send newMessage\n"
+            "  delete newMessage\n"
+            "end tell"
+        )
+
+    def send_mail(self, to_address: str, subject: str, body: str) -> None:
+        """Send a message from Mail's default account.
+
+        The only method in mail-triage that sends anything. Callers must have
+        an explicit per-message confirmation in hand before calling it.
+        """
+        _run(self._send_script(to_address, subject, body))
 
 
 def _parse_headers(raw: str) -> dict[str, str]:
@@ -353,6 +421,7 @@ class FakeMail:
         self._keys = dict(keys or {})
         self.moved: list[tuple[int, str, str, str]] = []
         self.sent: list[tuple[str, str]] = []
+        self.header_reads: list[tuple[int, str | None, str | None]] = []
 
     def _contents(self, account: str, folder: str) -> list[int]:
         """The list backing one mailbox, creating it on first use.
@@ -426,5 +495,16 @@ class FakeMail:
         self._contents(account, folder).append(message_id)
         self.moved.append((message_id, folder, account, source_folder))
 
-    def message_headers(self, message_id: int) -> dict[str, str]:
+    def message_headers(
+        self, message_id: int, mailbox: str | None = None, account: str | None = None
+    ) -> dict[str, str]:
+        # Recorded so a test can prove *where* a header was read from: fetching
+        # a binned message from the inbox would find nothing, and a fake that
+        # answered regardless would hide exactly that bug.
+        self.header_reads.append((message_id, mailbox, account))
         return dict(self._headers.get(message_id, {}))
+
+    def send_mail(self, to_address: str, subject: str, body: str) -> None:
+        # Body deliberately not recorded: what matters to a test is that
+        # exactly one message went to exactly one address.
+        self.sent.append((to_address, subject))

@@ -31,6 +31,7 @@ from mail_triage.size_report import (
     parse_size, render_account, render_maildata, render_summary,
 )
 from mail_triage.sizes import build_account_usage, maildata_usage
+from mail_triage.unsubscribe import find_candidates, send_unsubscribe
 
 
 @click.group(cls=ColouredGroup)
@@ -630,6 +631,98 @@ def explain(sender: str) -> None:
     counts = model.sender.by_sender.get(address) or model.sender.by_domain.get(domain, {})
     for folder, weight in sorted(counts.items(), key=lambda item: item[1], reverse=True):
         click.echo(f"  {folder:<40}{weight:>8.2f}")
+
+
+@cli.command()
+@click.option(
+    "--dry-run/--no-dry-run",
+    default=False,
+    help="List the candidates and send nothing.",
+)
+@click.option(
+    "--limit",
+    default=20,
+    help="How many senders to fetch unsubscribe headers for. Each is an "
+    "AppleScript round trip, so this is the slow part.",
+)
+@click.option(
+    "--sender",
+    default=None,
+    metavar="TEXT",
+    help="Only offer senders whose address contains TEXT. Naming the sender "
+    "is a safer way to send one than answering the first prompt, since the "
+    "ranking shifts as mail arrives.",
+)
+def unsubscribe(dry_run: bool, limit: int, sender: str | None) -> None:
+    """Suggest lists worth leaving, and send the request if you say so.
+
+    This is the only command that sends mail. It asks about one sender at a
+    time and sends only on an explicit 'y'; anything else skips. Ranking
+    counts the mail you binned as well as the mail you never opened —
+    deleting a newsletter unread is the clearest statement there is that you
+    do not want it.
+
+    Only 'mailto:' unsubscribe targets are used. HTTP one-click unsubscribe
+    is deliberately unsupported: it would mean firing off arbitrary web
+    requests to an address the sender chose.
+    """
+    config = load_config()
+    mail = AppleScriptMail()
+    with tempfile.TemporaryDirectory() as work:
+        snapshot = snapshot_database(DEFAULT_DB_PATH, Path(work))
+        reader = EnvelopeReader(snapshot)
+        try:
+            candidates = find_candidates(reader, config, mail, limit=limit)
+        finally:
+            reader.close()
+
+    if sender:
+        # Filtered after ranking, not before: the counts and the ordering are
+        # the same ones a full run would show, so what you see here is what
+        # you would have seen there.
+        candidates = [
+            option for option in candidates if sender.casefold() in option.sender.casefold()
+        ]
+        if not candidates:
+            raise click.ClickException(f"No candidate sender contains {sender!r}.")
+
+    if not candidates:
+        click.echo("Nothing to unsubscribe from — no candidate carried a List-Unsubscribe header.")
+        return
+
+    sent = 0
+    skipped = 0
+    for option in candidates:
+        share = round(option.ignored_share * 100)
+        binned = f", {option.deleted_count} binned" if option.deleted_count else ""
+        click.echo(
+            f"\n{click.style(option.sender, fg='yellow', bold=True)} "
+            f"[{option.account}] — {option.message_count} in the inbox, "
+            f"{option.unread_count} unread{binned} ({share}% ignored)"
+        )
+        if option.method != "mailto":
+            click.echo(f"  Only an HTTP unsubscribe ({option.target}) — skipping, do it yourself.")
+            skipped += 1
+            continue
+        if dry_run:
+            click.echo(f"  Would unsubscribe via {option.target}")
+            continue
+        if not click.confirm(f"  Unsubscribe via {option.target}?", default=False):
+            skipped += 1
+            continue
+        try:
+            send_unsubscribe(option, mail)
+        except (ValueError, MailError) as error:
+            click.echo(click.style(f"  Not sent: {error}", fg="red"))
+            skipped += 1
+            continue
+        sent += 1
+        click.echo(click.style("  Sent.", fg="green"))
+
+    if dry_run:
+        click.echo(f"\n{len(candidates)} candidates. Nothing sent (--dry-run).")
+    else:
+        click.echo(f"\nSent {sent}, skipped {skipped}.")
 
 
 @cli.command()

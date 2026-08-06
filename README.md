@@ -140,8 +140,40 @@ running `triage --dry-run` first to see what it would do.
 | `rules` | List the answers you have given about senders |
 | `rules --forget <sender>` | Remove one sender's rule |
 | `explain <sender>` | Show why that sender's mail goes where it does |
+| `unsubscribe` | Suggest lists worth leaving, and send the request if you agree |
+| `unsubscribe --dry-run` | List the candidates; send nothing |
+| `unsubscribe --limit N` | How many senders to fetch headers for (default 20) |
+| `unsubscribe --sender TEXT` | Only offer senders whose address contains TEXT |
 | `runs` | List runs that can be undone |
 | `undo [run-id]` | Reverse a run, defaulting to the most recent |
+
+## Getting less mail
+
+`unsubscribe` is the only command that sends anything. It ranks the senders
+whose mail you most reliably ignore, and offers them one at a time:
+
+```
+news@list.example [iCloud] — 4 in the inbox, 4 unread, 22 binned (96% ignored)
+  Unsubscribe via leave@list.example? [y/N]
+```
+
+**Deleted mail is the main evidence.** Unread-in-the-inbox only sees what you
+have not got round to; the mail you binned is a decision, and it has already
+left the inbox where an unread count would find it. Deletions are counted
+within each account, over the same recent window the filing veto uses, so a
+sender you bin in one account and read in another is not mistaken for noise.
+
+`--sender` narrows the list to one address. Prefer it over answering the
+first prompt when you mean to send exactly one: the ranking moves as mail
+arrives, so position is not a reliable way to aim.
+
+Nothing is sent without an explicit `y` for that particular sender — the
+prompt defaults to no, and `--dry-run` sends nothing at all. Only `mailto:`
+unsubscribe targets are used; HTTP one-click unsubscribe is deliberately
+unsupported, as it would mean firing arbitrary web requests at an address the
+sender chose. Fetching the `List-Unsubscribe` header costs an AppleScript
+round trip per sender, which is why `--limit` exists and why the ranking
+happens before the fetching.
 
 ## Where the space has gone
 
