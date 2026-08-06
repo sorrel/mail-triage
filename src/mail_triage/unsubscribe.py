@@ -14,24 +14,33 @@ reuses that index rather than growing a second notion of "ignored". Counts
 stay within each account, as they do there: a sender you bin in one account
 and read in another is not being ignored.
 
-Candidates are drawn from senders with mail *currently in an inbox*, because
-the ``List-Unsubscribe`` header can only be fetched from a message Mail can
-still find, and because a list you have finished binning is one that is still
-sending. A sender who has gone quiet needs no unsubscribing.
+Candidates are the union of senders with mail in an inbox and senders with
+mail in the bin. Drawing them from the inbox alone was the first attempt and
+it was wrong in the worst direction: a well-triaged inbox holds almost nothing
+from the senders most worth leaving, precisely because they get binned on
+sight. A live dry run on 5 August 2026 found two candidates, and the strongest
+of them surfaced only because a single message happened to still be sitting in
+the inbox.
+
+The ``List-Unsubscribe`` header is not in the database, so it is read from a
+message Mail can still find — from the inbox where possible, otherwise from
+the bin, which is why ``message_headers`` takes a mailbox. A message that has
+been purged between the snapshot and the fetch simply drops out.
 """
 
 from __future__ import annotations
 
 import re
+import time
 from collections import defaultdict
 from dataclasses import dataclass, replace
 
 from mail_triage.config import Config, Source
 from mail_triage.corpus import normalise_sender
-from mail_triage.deletion import build_deletion_index
+from mail_triage.deletion import SECONDS_PER_DAY, build_deletion_index
 from mail_triage.envelope import MessageRow
 from mail_triage.folders import folder_path
-from mail_triage.mail_app import MailInterface
+from mail_triage.mail_app import MailError, MailInterface
 
 _TARGET = re.compile(r"<([^>]+)>")
 
@@ -95,9 +104,9 @@ def rank_candidates(options: list[UnsubscribeOption]) -> list[UnsubscribeOption]
 
 
 def rank_candidates_with_ids(
-    pairs: list[tuple[UnsubscribeOption, int]],
-) -> list[tuple[UnsubscribeOption, int]]:
-    """``rank_candidates`` over (option, message id) pairs, same order."""
+    pairs: list[tuple[UnsubscribeOption, "_Exemplar"]],
+) -> list[tuple[UnsubscribeOption, "_Exemplar"]]:
+    """``rank_candidates`` over (option, exemplar) pairs, same order."""
     return sorted(pairs, key=lambda pair: _rank_key(pair[0]), reverse=True)
 
 
@@ -114,11 +123,25 @@ def tally_senders(messages: list[MessageRow]) -> dict[str, tuple[int, int]]:
     return {sender: (counts[0], counts[1]) for sender, counts in totals.items()}
 
 
-def _inbox_url(reader, source: Source) -> str | None:
+def _folder_url(reader, source: Source, folder: str) -> str | None:
     for url in reader.mailbox_urls():
-        if url.startswith(source.prefix) and folder_path(url).casefold() == source.inbox.casefold():
+        if url.startswith(source.prefix) and folder_path(url).casefold() == folder.casefold():
             return url
     return None
+
+
+@dataclass(frozen=True)
+class _Exemplar:
+    """Where to read one sender's ``List-Unsubscribe`` header from.
+
+    A mailbox and account are carried, not just an id: a binned sender's only
+    remaining message is in the Trash, and Mail's unified ``inbox`` query
+    cannot see it.
+    """
+
+    message_id: int
+    mailbox: str | None
+    account: str | None
 
 
 def find_candidates(
@@ -137,21 +160,53 @@ def find_candidates(
     drop out at that point, which is why the returned list is usually shorter
     than the limit.
     """
+    if now is None:
+        now = int(time.time())
+    cutoff = now - config.deletion_window_days * SECONDS_PER_DAY
     # Each entry pairs a fully-counted option with the message its header will
     # be fetched from. The counts are complete before any fetching, which is
     # what lets the ranking decide who is worth a round trip.
-    provisional: list[tuple[UnsubscribeOption, int]] = []
+    provisional: list[tuple[UnsubscribeOption, _Exemplar]] = []
     for source in config.sources:
-        inbox_url = _inbox_url(reader, source)
-        if inbox_url is None:
-            continue
-        messages = list(reader.inbox_messages(inbox_url))
+        inbox_url = _folder_url(reader, source, source.inbox)
+        messages = list(reader.inbox_messages(inbox_url)) if inbox_url else []
         deletions = build_deletion_index(reader, config, source, now=now)
-        # One message id per sender, to fetch that sender's header from.
-        exemplar: dict[str, int] = {}
+
+        # One message per sender to read the header from, preferring one still
+        # in the inbox: the Trash purges on a rolling window, so a message
+        # sitting in it is the likelier of the two to have gone by the time
+        # the fetch happens.
+        exemplars: dict[str, _Exemplar] = {}
         for message in messages:
-            exemplar.setdefault(normalise_sender(message.sender), message.rowid)
-        for sender, (count, unread) in tally_senders(messages).items():
+            exemplars.setdefault(
+                normalise_sender(message.sender),
+                _Exemplar(message.rowid, source.inbox, source.name),
+            )
+        trash_url = _folder_url(reader, source, source.trash)
+        if trash_url:
+            for message in reader.messages_in_mailbox(trash_url):
+                if not message.date_sent or message.date_sent < cutoff:
+                    continue
+                exemplars.setdefault(
+                    normalise_sender(message.sender),
+                    _Exemplar(message.rowid, source.trash, source.name),
+                )
+
+        # Senders are the union of "has inbox mail" and "has binned mail".
+        # Inbox-only would hide the best candidates of all: a sender you bin
+        # on sight leaves nothing in the inbox to be found by.
+        inbox_counts = tally_senders(messages)
+        senders = set(inbox_counts) | {
+            sender for sender, stats in deletions.items() if stats.deleted
+        }
+        for sender in senders:
+            exemplar = exemplars.get(sender)
+            if exemplar is None:
+                # Counted as deleted from a folder that is not this source's
+                # Trash (the "Deleted*" patterns cover a few), so there is no
+                # message we know how to address. No header, no candidate.
+                continue
+            count, unread = inbox_counts.get(sender, (0, 0))
             stats = deletions.get(sender)
             provisional.append(
                 (
@@ -165,15 +220,23 @@ def find_candidates(
                         deleted_count=stats.deleted if stats else 0,
                         account=source.name,
                     ),
-                    exemplar[sender],
+                    exemplar,
                 )
             )
     provisional = rank_candidates_with_ids(provisional)
 
     options: list[UnsubscribeOption] = []
-    for option, message_id in provisional[: max(limit, 0)]:
-        header = mail.message_headers(message_id).get("List-Unsubscribe", "")
-        parsed = parse_list_unsubscribe(header)
+    for option, exemplar in provisional[: max(limit, 0)]:
+        try:
+            headers = mail.message_headers(
+                exemplar.message_id, exemplar.mailbox, exemplar.account
+            )
+        except MailError:
+            # The Trash purges, and messages move. A candidate we can no
+            # longer read a header from is simply not a candidate; it is not
+            # a reason to abandon the run.
+            continue
+        parsed = parse_list_unsubscribe(headers.get("List-Unsubscribe", ""))
         if parsed is None:
             continue
         method, target = parsed

@@ -237,7 +237,7 @@ def test_find_candidates_honours_the_limit_on_header_fetches(tmp_path):
     fetched: list[int] = []
 
     class CountingMail(FakeMail):
-        def message_headers(self, message_id: int) -> dict[str, str]:
+        def message_headers(self, message_id, mailbox=None, account=None):
             fetched.append(message_id)
             return {"List-Unsubscribe": "<mailto:leave@x.example>"}
 
@@ -284,6 +284,142 @@ def test_find_candidates_spans_every_source(tmp_path):
     reader.close()
 
 
+def test_find_candidates_reaches_senders_with_nothing_left_in_the_inbox(tmp_path):
+    """The best candidates have no inbox mail at all — that is why they qualify.
+
+    A sender you bin on sight leaves nothing behind for an inbox scan to find,
+    so drawing candidates from the inbox alone hides exactly the senders worth
+    leaving. Their header comes from a message still in the Trash.
+    """
+    path = tmp_path / "Envelope Index"
+    build_fixture_db(
+        path,
+        [
+            {"sender": "news@x.example", "subject": f"Binned {n}", "date_sent": NOW - 2 * DAY,
+             "mailbox_url": f"{PREFIX}Deleted%20Messages", "read": 1, "rowid": 50 + n}
+            for n in range(9)
+        ],
+    )
+    reader = EnvelopeReader(path)
+    mail = FakeMail(
+        inbox=[],
+        mailboxes=["Deleted Messages"],
+        headers={50: {"List-Unsubscribe": "<mailto:leave@x.example>"}},
+    )
+
+    candidates = find_candidates(reader, make_config(tmp_path), mail, limit=10, now=NOW)
+
+    assert [c.sender for c in candidates] == ["news@x.example"]
+    assert candidates[0].deleted_count == 9
+    assert candidates[0].message_count == 0
+    assert candidates[0].target == "leave@x.example"
+    reader.close()
+
+
+def test_a_binned_sender_header_is_read_from_that_account_trash(tmp_path):
+    """Fetching from the inbox would find nothing: the message is not there."""
+    path = tmp_path / "Envelope Index"
+    build_fixture_db(
+        path,
+        [
+            {"sender": "news@x.example", "subject": "Binned", "date_sent": NOW - 2 * DAY,
+             "mailbox_url": f"{PREFIX}Deleted%20Messages", "read": 1, "rowid": 7},
+        ],
+    )
+    reader = EnvelopeReader(path)
+    mail = FakeMail(inbox=[], mailboxes=["Deleted Messages"])
+    config = make_config(tmp_path, sources=[Source(name="iCloud", prefix=PREFIX)])
+
+    find_candidates(reader, config, mail, limit=10, now=NOW)
+
+    assert mail.header_reads == [(7, "Deleted Messages", "iCloud")]
+    reader.close()
+
+
+def test_inbox_mail_is_still_read_from_the_inbox(tmp_path):
+    path = tmp_path / "Envelope Index"
+    build_fixture_db(
+        path,
+        [
+            {"sender": "news@x.example", "subject": "Here", "date_sent": NOW - DAY,
+             "mailbox_url": f"{PREFIX}INBOX", "read": 0, "rowid": 3},
+        ],
+    )
+    reader = EnvelopeReader(path)
+    mail = FakeMail(inbox=[3], mailboxes=[])
+    config = make_config(tmp_path, sources=[Source(name="iCloud", prefix=PREFIX)])
+
+    find_candidates(reader, config, mail, limit=10, now=NOW)
+
+    assert mail.header_reads == [(3, "INBOX", "iCloud")]
+    reader.close()
+
+
+def test_an_inbox_message_is_preferred_over_a_binned_one(tmp_path):
+    """One fetch per sender, from the mailbox least likely to have purged it."""
+    path = tmp_path / "Envelope Index"
+    build_fixture_db(
+        path,
+        [
+            {"sender": "news@x.example", "subject": "Binned", "date_sent": NOW - 2 * DAY,
+             "mailbox_url": f"{PREFIX}Deleted%20Messages", "read": 1, "rowid": 1},
+            {"sender": "news@x.example", "subject": "Here", "date_sent": NOW - DAY,
+             "mailbox_url": f"{PREFIX}INBOX", "read": 0, "rowid": 2},
+        ],
+    )
+    reader = EnvelopeReader(path)
+    mail = FakeMail(inbox=[2], mailboxes=["Deleted Messages"])
+    config = make_config(tmp_path, sources=[Source(name="iCloud", prefix=PREFIX)])
+
+    find_candidates(reader, config, mail, limit=10, now=NOW)
+
+    assert mail.header_reads == [(2, "INBOX", "iCloud")]
+    reader.close()
+
+
+def test_deletions_outside_the_window_are_not_counted(tmp_path):
+    """The Trash purges on a rolling window; the counts must match it."""
+    path = tmp_path / "Envelope Index"
+    config = make_config(tmp_path)
+    old = NOW - (config.deletion_window_days + 5) * DAY
+    build_fixture_db(
+        path,
+        [
+            {"sender": "news@x.example", "subject": "Ancient", "date_sent": old,
+             "mailbox_url": f"{PREFIX}Deleted%20Messages", "read": 1, "rowid": 1},
+        ],
+    )
+    reader = EnvelopeReader(path)
+    mail = FakeMail(inbox=[], mailboxes=["Deleted Messages"])
+
+    assert find_candidates(reader, config, mail, limit=10, now=NOW) == []
+    assert mail.header_reads == []
+    reader.close()
+
+
+def test_a_header_that_cannot_be_read_drops_the_candidate(tmp_path):
+    """Trash purges between the snapshot and the fetch; that is not an error."""
+    from mail_triage.mail_app import MessageNotFoundError
+
+    path = tmp_path / "Envelope Index"
+    build_fixture_db(
+        path,
+        [
+            {"sender": "news@x.example", "subject": "Gone", "date_sent": NOW - DAY,
+             "mailbox_url": f"{PREFIX}Deleted%20Messages", "read": 1, "rowid": 1},
+        ],
+    )
+    reader = EnvelopeReader(path)
+
+    class VanishedMail(FakeMail):
+        def message_headers(self, message_id, mailbox=None, account=None):
+            raise MessageNotFoundError("gone")
+
+    mail = VanishedMail(inbox=[], mailboxes=["Deleted Messages"])
+    assert find_candidates(reader, make_config(tmp_path), mail, limit=10, now=NOW) == []
+    reader.close()
+
+
 # --- Sending --------------------------------------------------------------
 
 
@@ -310,6 +446,21 @@ def test_refuses_a_target_that_is_not_an_address():
     with pytest.raises(ValueError, match="address"):
         send_unsubscribe(bogus, mail)
     assert mail.sent == []
+
+
+def test_headers_script_addresses_the_named_mailbox():
+    from mail_triage.mail_app import AppleScriptMail
+
+    script = AppleScriptMail()._headers_script(7, "Deleted Messages", "iCloud")
+
+    assert 'mailbox "Deleted Messages" of account "iCloud"' in script
+    assert "id is 7" in script
+
+
+def test_headers_script_still_reads_the_inbox_by_default():
+    from mail_triage.mail_app import AppleScriptMail
+
+    assert "of inbox" in AppleScriptMail()._headers_script(7, None, None)
 
 
 def test_send_mail_escapes_its_arguments():

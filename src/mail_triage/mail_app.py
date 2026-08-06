@@ -50,7 +50,9 @@ class MailInterface(Protocol):
         message_key: str | None = None,
         source_account: str | None = None,
     ) -> None: ...
-    def message_headers(self, message_id: int) -> dict[str, str]: ...
+    def message_headers(
+        self, message_id: int, mailbox: str | None = None, account: str | None = None
+    ) -> dict[str, str]: ...
     def message_key(self, message_id: int, source_folder: str, account: str) -> str: ...
     def send_mail(self, to_address: str, subject: str, body: str) -> None: ...
 
@@ -249,15 +251,36 @@ class AppleScriptMail:
                 str(error), message_id, folder, account, source_folder
             ) from error
 
-    def message_headers(self, message_id: int) -> dict[str, str]:
-        """Fetch raw headers. Mail's database does not store these."""
-        script = (
+    def _headers_script(
+        self, message_id: int, mailbox: str | None, account: str | None
+    ) -> str:
+        """The AppleScript for one header read.
+
+        With no mailbox, this reads Mail's unified ``inbox``, which is what
+        the do-not-file guards want: they are looking at mail that is, by
+        definition, still in an inbox. A named mailbox is needed for anything
+        that has left one — the unsubscribe candidates drawn from the Trash,
+        whose whole qualification is that nothing of theirs remains in the
+        inbox for the unified query to find.
+        """
+        if mailbox is None:
+            target = "inbox"
+        else:
+            target = f'mailbox "{_escape_applescript_string(mailbox)}"'
+            if account is not None:
+                target += f' of account "{_escape_applescript_string(account)}"'
+        return (
             'tell application "Mail"\n'
-            f"  set theMessage to (first message of inbox whose id is {message_id})\n"
+            f"  set theMessage to (first message of {target} whose id is {message_id})\n"
             "  return all headers of theMessage\n"
             "end tell"
         )
-        return _parse_headers(_run(script))
+
+    def message_headers(
+        self, message_id: int, mailbox: str | None = None, account: str | None = None
+    ) -> dict[str, str]:
+        """Fetch raw headers. Mail's database does not store these."""
+        return _parse_headers(_run(self._headers_script(message_id, mailbox, account)))
 
     def message_key(self, message_id: int, source_folder: str, account: str) -> str:
         """Return the RFC-822 Message-ID, which survives moves.
@@ -385,6 +408,7 @@ class FakeMail:
         self._keys = dict(keys or {})
         self.moved: list[tuple[int, str, str, str]] = []
         self.sent: list[tuple[str, str]] = []
+        self.header_reads: list[tuple[int, str | None, str | None]] = []
 
     def _contents(self, account: str, folder: str) -> list[int]:
         """The list backing one mailbox, creating it on first use.
@@ -458,7 +482,13 @@ class FakeMail:
         self._contents(account, folder).append(message_id)
         self.moved.append((message_id, folder, account, source_folder))
 
-    def message_headers(self, message_id: int) -> dict[str, str]:
+    def message_headers(
+        self, message_id: int, mailbox: str | None = None, account: str | None = None
+    ) -> dict[str, str]:
+        # Recorded so a test can prove *where* a header was read from: fetching
+        # a binned message from the inbox would find nothing, and a fake that
+        # answered regardless would hide exactly that bug.
+        self.header_reads.append((message_id, mailbox, account))
         return dict(self._headers.get(message_id, {}))
 
     def send_mail(self, to_address: str, subject: str, body: str) -> None:
