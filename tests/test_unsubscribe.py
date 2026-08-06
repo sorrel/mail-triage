@@ -463,6 +463,17 @@ def test_headers_script_still_reads_the_inbox_by_default():
     assert "of inbox" in AppleScriptMail()._headers_script(7, None, None)
 
 
+def test_the_outgoing_message_is_deleted_after_sending():
+    """Otherwise Mail's autosave writes it to Drafts (seen live, 6 Aug 2026)."""
+    from mail_triage.mail_app import AppleScriptMail
+
+    script = AppleScriptMail()._send_script("leave@x.example", "unsubscribe", "unsubscribe")
+
+    assert "delete newMessage" in script
+    # Order matters absolutely: deleting first would send nothing at all.
+    assert script.index("send newMessage") < script.index("delete newMessage")
+
+
 def test_send_mail_escapes_its_arguments():
     """A quote in a sender-supplied address must not break out of the script."""
     from mail_triage.mail_app import AppleScriptMail
