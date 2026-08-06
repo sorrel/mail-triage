@@ -391,10 +391,23 @@ address, which is how a single deliberate send should be aimed — the ranking
 shifts as mail arrives, so answering the first prompt aims at whatever
 happens to be top that minute.
 
-**Known defect (6 August 2026):** Mail leaves a copy of the sent message in
-Drafts. The first live send landed correctly in Sent Messages on the right
-account, and a stray draft appeared in the same account half a minute later.
-Harmless per send, but it would accumulate. Unfixed. Only `mailto:` targets are sent. HTTP
+**Known defect (6 August 2026): Mail leaves a copy of every sent message in
+Drafts, and the sending script cannot prevent it.** Measured twice — sent
+19:48:56, draft 19:49:25; sent 20:25:15, draft 20:25:25. Both sends were
+delivered correctly, from the iCloud account, and the second was confirmed by
+its arrival.
+
+Appending `delete newMessage` after the send was the obvious fix and it does
+not work: Mail has written the autosaved draft to the server before that runs,
+and deleting the compose object does not retract it. That attempt was reverted
+rather than left in place looking like a fix. The unit test now asserts the
+script contains no `delete` or `move` at all.
+
+The remaining route is to find the draft in the Drafts mailbox afterwards and
+bin it, matched on subject and recipient. That is deleting stored mail on a
+match, which needs its own decision — one draft per unsubscribe is untidy, but
+a wrong match deletes something the user wrote. Left unfixed pending that
+decision. Only `mailto:` targets are sent. HTTP
 one-click unsubscribe (RFC 8058) stays unsupported: it would mean arbitrary
 outbound web requests to an address the sender chose. The target address comes
 from a header the *sender* wrote, so it is treated as untrusted — checked

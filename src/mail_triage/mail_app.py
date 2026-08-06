@@ -317,17 +317,16 @@ class AppleScriptMail:
         and let the rest of the header become script. Escaping is the whole
         reason this is a separate, testable method.
 
-        ``delete newMessage`` follows the send because the outgoing message
-        object outlives it, and Mail's autosave then writes it to Drafts —
-        observed on the first live send (6 August 2026), where the sent copy
-        reached Sent Messages at 19:48:56 and a stray draft appeared in the
-        same account at 19:49:25. Deleting the object before the autosave
-        timer fires prevents the draft rather than tidying it up afterwards,
-        which matters: the alternative is hunting a message in the Drafts
-        mailbox and deleting it, and deleting stored mail on a guess is a far
-        worse failure mode than leaving a draft behind. ``delete`` applies to
-        the outgoing message — the compose object — not to anything in a
-        mailbox.
+        **Every send leaves a copy in Drafts, and this script cannot prevent
+        it.** Measured twice on 6 August 2026: sent 19:48:56, draft 19:49:25;
+        sent 20:25:15, draft 20:25:25. Appending ``delete newMessage`` after
+        the send was tried and made no difference — Mail has already written
+        the autosaved draft to the server by then, and deleting the compose
+        object does not retract it. The draft is left alone rather than hunted
+        down in the Drafts mailbox and deleted: deleting stored mail on a
+        match of subject and recipient is a far worse failure mode than a
+        stray draft. Tidying up is a decision for the caller, not for the one
+        method that sends.
         """
         return (
             'tell application "Mail"\n'
@@ -339,7 +338,6 @@ class AppleScriptMail:
             f'{{address:"{_escape_applescript_string(to_address)}"}}\n'
             "  end tell\n"
             "  send newMessage\n"
-            "  delete newMessage\n"
             "end tell"
         )
 
