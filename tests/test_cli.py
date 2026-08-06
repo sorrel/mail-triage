@@ -1203,3 +1203,22 @@ def test_unsubscribe_never_offers_an_http_target(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert mail.sent == []
     assert "do it yourself" in result.output
+
+
+def test_unsubscribe_sender_filter_offers_only_that_sender(tmp_path, monkeypatch):
+    """Naming the sender is how a first send is aimed; position is not stable."""
+    options = [_option("a@x.example"), _option("b@y.example")]
+    runner, mail = _sending_runner(tmp_path, monkeypatch, options)
+    result = runner.invoke(cli, ["unsubscribe", "--sender", "b@y"], input="y\n")
+    assert result.exit_code == 0
+    assert mail.sent == [("leave@y.example", "unsubscribe")]
+    assert "a@x.example" not in result.output
+
+
+def test_unsubscribe_sender_filter_matching_nothing_is_an_error(tmp_path, monkeypatch):
+    """Silence would look identical to 'nothing to unsubscribe from'."""
+    runner, mail = _sending_runner(tmp_path, monkeypatch, [_option("a@x.example")])
+    result = runner.invoke(cli, ["unsubscribe", "--sender", "nobody"], input="")
+    assert result.exit_code != 0
+    assert mail.sent == []
+    assert "No candidate sender contains" in result.output

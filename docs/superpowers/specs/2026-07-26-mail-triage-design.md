@@ -354,6 +354,7 @@ names in source.
 | `explain <sender>` | Show why mail from a sender lands where it does |
 | `unsubscribe` | Suggest lists worth leaving; send the request one at a time |
 | `unsubscribe --dry-run` | List the candidates; send nothing |
+| `unsubscribe --sender TEXT` | Offer only senders matching TEXT |
 
 ## Unsubscribe
 
@@ -385,7 +386,15 @@ happens first and only the top `--limit` senders (default 20) are asked about.
 Senders whose mail carries no such header simply drop out.
 
 **Sending** requires an explicit `y` for that specific sender; anything else
-skips, and the prompt defaults to no. Only `mailto:` targets are sent. HTTP
+skips, and the prompt defaults to no. `--sender` narrows the offer to one
+address, which is how a single deliberate send should be aimed — the ranking
+shifts as mail arrives, so answering the first prompt aims at whatever
+happens to be top that minute.
+
+**Known defect (6 August 2026):** Mail leaves a copy of the sent message in
+Drafts. The first live send landed correctly in Sent Messages on the right
+account, and a stray draft appeared in the same account half a minute later.
+Harmless per send, but it would accumulate. Unfixed. Only `mailto:` targets are sent. HTTP
 one-click unsubscribe (RFC 8058) stays unsupported: it would mean arbitrary
 outbound web requests to an address the sender chose. The target address comes
 from a header the *sender* wrote, so it is treated as untrusted — checked

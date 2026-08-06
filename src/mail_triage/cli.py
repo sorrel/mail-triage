@@ -645,7 +645,15 @@ def explain(sender: str) -> None:
     help="How many senders to fetch unsubscribe headers for. Each is an "
     "AppleScript round trip, so this is the slow part.",
 )
-def unsubscribe(dry_run: bool, limit: int) -> None:
+@click.option(
+    "--sender",
+    default=None,
+    metavar="TEXT",
+    help="Only offer senders whose address contains TEXT. Naming the sender "
+    "is a safer way to send one than answering the first prompt, since the "
+    "ranking shifts as mail arrives.",
+)
+def unsubscribe(dry_run: bool, limit: int, sender: str | None) -> None:
     """Suggest lists worth leaving, and send the request if you say so.
 
     This is the only command that sends mail. It asks about one sender at a
@@ -667,6 +675,16 @@ def unsubscribe(dry_run: bool, limit: int) -> None:
             candidates = find_candidates(reader, config, mail, limit=limit)
         finally:
             reader.close()
+
+    if sender:
+        # Filtered after ranking, not before: the counts and the ordering are
+        # the same ones a full run would show, so what you see here is what
+        # you would have seen there.
+        candidates = [
+            option for option in candidates if sender.casefold() in option.sender.casefold()
+        ]
+        if not candidates:
+            raise click.ClickException(f"No candidate sender contains {sender!r}.")
 
     if not candidates:
         click.echo("Nothing to unsubscribe from — no candidate carried a List-Unsubscribe header.")

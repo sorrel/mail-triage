@@ -143,6 +143,7 @@ running `triage --dry-run` first to see what it would do.
 | `unsubscribe` | Suggest lists worth leaving, and send the request if you agree |
 | `unsubscribe --dry-run` | List the candidates; send nothing |
 | `unsubscribe --limit N` | How many senders to fetch headers for (default 20) |
+| `unsubscribe --sender TEXT` | Only offer senders whose address contains TEXT |
 | `runs` | List runs that can be undone |
 | `undo [run-id]` | Reverse a run, defaulting to the most recent |
 
@@ -161,6 +162,10 @@ have not got round to; the mail you binned is a decision, and it has already
 left the inbox where an unread count would find it. Deletions are counted
 within each account, over the same recent window the filing veto uses, so a
 sender you bin in one account and read in another is not mistaken for noise.
+
+`--sender` narrows the list to one address. Prefer it over answering the
+first prompt when you mean to send exactly one: the ranking moves as mail
+arrives, so position is not a reliable way to aim.
 
 Nothing is sent without an explicit `y` for that particular sender — the
 prompt defaults to no, and `--dry-run` sends nothing at all. Only `mailto:`
