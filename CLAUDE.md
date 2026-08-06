@@ -118,6 +118,20 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
 - **Size on disk means `st_blocks * 512`, not `st_size`.** A mail store is tens
   of thousands of small `.emlx` files; apparent size understates real
   consumption badly once block rounding is counted. `du` agrees with the former.
+- **A `mailto:` unsubscribe URL's parameters are the request, not decoration.**
+  `<mailto:unsubscribe-ENG@…?subject=hmv-prod/unsub/CgxnVLz…>` carries the
+  subscriber token in `?subject=`. The first live send stripped the query
+  string and was rejected outright — `554 Message rejected: The unsubscribe
+  request has invalid form` — because a request without the token identifies
+  nobody. Parse with `parse_qsl` and percent-decode (RFC 6068); default to
+  the word "unsubscribe" only when the URL carries no parameters at all.
+  Note the failure mode: the send *succeeds*, the tool reports "Sent", and
+  the rejection arrives seconds later as a bounce nobody is watching for.
+- **Mail leaves an autosaved copy of every sent message in Drafts**, and the
+  sending script cannot prevent it. `delete newMessage` after `send` was
+  tried live and changed nothing — the draft is already on the server by
+  then. Deleting it afterwards means matching a stored message on subject
+  and recipient, which is not a guess worth making.
 - **In TOML, every top-level key must precede the first `[[source]]` table.**
   Anything after one is parsed as part of it. This broke the first draft of
   `config.example.toml`; `load_config` now says so by name when it happens.

@@ -385,6 +385,14 @@ database and each read is an AppleScript round trip, so the ranking on counts
 happens first and only the top `--limit` senders (default 20) are asked about.
 Senders whose mail carries no such header simply drop out.
 
+**The request must carry the sender's own parameters.** A `mailto:` URL's
+`?subject=` and `?body=` are part of the request: the subject typically *is*
+the subscriber token. The first live send discarded them and was rejected —
+`554 Message rejected: The unsubscribe request has invalid form` — which is
+the provider correctly observing that the request identified nobody. Note how
+this fails: the send succeeds, the tool says "Sent", and the rejection arrives
+seconds later as a bounce. A reported send is not a completed unsubscribe.
+
 **Sending** requires an explicit `y` for that specific sender; anything else
 skips, and the prompt defaults to no. `--sender` narrows the offer to one
 address, which is how a single deliberate send should be aimed — the ranking
