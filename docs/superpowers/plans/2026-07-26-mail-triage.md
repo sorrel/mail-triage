@@ -3729,7 +3729,7 @@ the summary confirmation is the second gate, not the first.
 
 ---
 
-### Task 20: A reported send is not a completed unsubscribe
+### Task 20: A reported send is not a completed unsubscribe — COMPLETE 7 August 2026
 
 **Files:** `src/mail_triage/unsubscribe.py`, `src/mail_triage/cli.py`.
 **Test:** `tests/test_unsubscribe.py`.

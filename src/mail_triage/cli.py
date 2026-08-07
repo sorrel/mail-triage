@@ -10,6 +10,7 @@ import click
 
 from mail_triage.accounts import account_names, resolve_account_name, truncate_name
 from mail_triage.asking import ask_all, rank_uncertain
+from mail_triage.bounces import attribute, candidate_rows, render_report
 from mail_triage.cli_help import ColouredGroup
 from mail_triage.config import load_config
 from mail_triage.corrections import load_corrections, record_overrides
@@ -25,12 +26,20 @@ from mail_triage.review import (
     auto_decisions, render_table, review, review_held, review_unplaced, summarise,
 )
 from mail_triage.rules import RulesError, forget_rule, load_rules
+from mail_triage.sends import (
+    SentRequest,
+    list_batches,
+    load_batch,
+    new_batch_id,
+    record_send,
+)
 from mail_triage.size_report import (
     parse_size, render_account, render_maildata, render_summary,
 )
 from mail_triage.sizes import build_account_usage, maildata_usage
 from mail_triage.unsubscribe import (
-    SelectionError, find_candidates, parse_selection, render_candidates, send_unsubscribe,
+    SelectionError, find_candidates, folder_url, parse_selection, render_candidates,
+    send_unsubscribe,
 )
 
 
@@ -605,11 +614,61 @@ def explain(sender: str) -> None:
         click.echo(f"  {folder:<40}{weight:>8.2f}")
 
 
+def _check_batch(config, mail, batch: list[SentRequest]):
+    """Bounces for one batch, or a reason it could not be checked.
+
+    A fresh snapshot every time: the one taken to find candidates predates
+    the requests and cannot contain a reply to them.
+    """
+    account = batch[0].from_account
+    source = next((item for item in config.sources if item.name == account), None)
+    if source is None:
+        return [], (
+            f"Sent from {account or 'an account this tool could not identify'}, which is "
+            "not a configured source — so the bounce cannot be looked for. Add it to "
+            "[[source]] in your config, or check that inbox yourself."
+        )
+    with tempfile.TemporaryDirectory() as work:
+        snapshot = snapshot_database(DEFAULT_DB_PATH, Path(work))
+        reader = EnvelopeReader(snapshot)
+        try:
+            inbox_url = folder_url(reader, source, source.inbox)
+            if inbox_url is None:
+                return [], f"No inbox named {source.inbox!r} in {source.name}."
+            rows = candidate_rows(reader.inbox_messages(inbox_url), batch)
+        finally:
+            reader.close()
+
+    pairs = []
+    unreadable = 0
+    for row in rows:
+        try:
+            pairs.append((row, mail.message_headers(row.rowid, source.inbox, source.name)))
+        except MailError:
+            # A message can be moved or deleted between snapshot and fetch.
+            # One unreadable candidate is not a reason to abandon the check.
+            unreadable += 1
+    bounces = attribute(pairs, batch)
+    if unreadable:
+        click.echo(
+            f"({unreadable} candidate "
+            f"{'message' if unreadable == 1 else 'messages'} could not be read — "
+            "moved or deleted since the snapshot.)"
+        )
+    return bounces, None
+
+
 @cli.command()
 @click.option(
     "--dry-run/--no-dry-run",
     default=False,
     help="List the candidates and send nothing.",
+)
+@click.option(
+    "--check",
+    "check",
+    is_flag=True,
+    help="Report bounces for the last batch of requests instead of sending more.",
 )
 @click.option(
     "--limit",
@@ -625,7 +684,7 @@ def explain(sender: str) -> None:
     "is a safer way to send one than answering the first prompt, since the "
     "ranking shifts as mail arrives.",
 )
-def unsubscribe(dry_run: bool, limit: int, sender: str | None) -> None:
+def unsubscribe(dry_run: bool, check: bool, limit: int, sender: str | None) -> None:
     """List the lists worth leaving, then unsubscribe from the ones you pick.
 
     This is the only command that sends mail. It prints the whole ranked list
@@ -641,9 +700,33 @@ def unsubscribe(dry_run: bool, limit: int, sender: str | None) -> None:
     deliberately unsupported — it would mean firing off arbitrary web requests
     to an address the sender chose — so those are listed with their URL for
     you to open yourself.
+
+    A sent request is not a completed unsubscribe: a rejection comes back as
+    a bounce moments later. Each run looks once before it finishes, and
+    '--check' reports on the last batch any time afterwards. It can tell you
+    which request bounced, not why — the reason is in the message body, which
+    this tool does not read — and it never reports a request as delivered,
+    because a silently discarded one looks exactly the same from here.
     """
     config = load_config()
     mail = AppleScriptMail()
+
+    if check:
+        batches = list_batches(config)
+        if not batches:
+            click.echo("No unsubscribe requests recorded yet.")
+            return
+        batch = load_batch(config, batches[0])
+        if not batch:
+            click.echo(f"Batch {batches[0]} recorded no sent requests.")
+            return
+        bounces, problem = _check_batch(config, mail, batch)
+        if problem:
+            click.echo(problem)
+            return
+        click.echo(render_report(batch, bounces, batches[0]))
+        return
+
     with tempfile.TemporaryDirectory() as work:
         snapshot = snapshot_database(DEFAULT_DB_PATH, Path(work))
         reader = EnvelopeReader(snapshot)
@@ -719,23 +802,40 @@ def unsubscribe(dry_run: bool, limit: int, sender: str | None) -> None:
         click.echo("Nothing sent.")
         return
 
+    batch_id = new_batch_id()
+    recorded: list[SentRequest] = []
     sent = 0
     failed = 0
     for number, option in picked:
         try:
-            send_unsubscribe(option, mail)
+            request = send_unsubscribe(option, mail)
         except (ValueError, MailError) as error:
             click.echo(click.style(f"  {option.sender}: not sent — {error}", fg="red"))
             failed += 1
             continue
+        # Recorded only now, after the send returned. A record written first
+        # would describe a request that might never have gone out, and
+        # --check would then find no bounce for it and call it fine.
+        record_send(config, batch_id, request)
+        recorded.append(request)
         sent += 1
         click.echo(click.style(f"  {option.sender}: sent", fg="green"))
 
     click.echo(f"\nSent {sent}, failed {failed}.")
-    click.echo(
-        "A sent request is not a completed unsubscribe: a rejection comes back "
-        "as a bounce moments later. Check your inbox for mailer-daemon."
-    )
+    if not recorded:
+        return
+
+    bounces, problem = _check_batch(config, mail, recorded)
+    if problem:
+        click.echo(problem)
+    elif bounces:
+        click.echo()
+        click.echo(render_report(recorded, bounces, batch_id))
+    else:
+        click.echo(
+            "No bounces yet — a rejection can take a minute to come back.\n"
+            "Run 'mail-triage unsubscribe --check' shortly to confirm."
+        )
 
 
 @cli.command()

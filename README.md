@@ -144,6 +144,7 @@ running `triage --dry-run` first to see what it would do.
 | `unsubscribe --dry-run` | List the candidates; send nothing |
 | `unsubscribe --limit N` | How many senders to fetch headers for (default 20) |
 | `unsubscribe --sender TEXT` | Only offer senders whose address contains TEXT |
+| `unsubscribe --check` | Report bounces for the last batch instead of sending |
 | `runs` | List runs that can be undone |
 | `undo [run-id]` | Reverse a run, defaulting to the most recent |
 
@@ -184,8 +185,28 @@ happens before the fetching.
 
 **A sent request is not a completed unsubscribe.** The provider may reject it,
 and the rejection arrives seconds later as a bounce from `mailer-daemon` — the
-first live send was rejected that way and reported success. Check your inbox
-after a batch.
+first live send was rejected that way and reported success.
+
+`mail-triage unsubscribe --check` reports whether the last batch bounced. A
+run already looks once before it finishes, but a rejection can take longer
+than the run does, so check again shortly afterwards:
+
+```
+$ mail-triage unsubscribe --check
+Batch 2026-08-06T19-48-56, 2 requests sent from iCloud.
+
+  news@list.example    leave@list.example   bounced         "Delivery Status Notification (Failure)"
+  offers@shop.example  unsub@shop.example   no bounce seen
+
+A bounce names the reason in its body, which this tool does not read.
+"No bounce seen" is not confirmation: a request can be accepted and ignored.
+```
+
+Two things it will not tell you. It reports *which* request bounced, not
+*why*: the SMTP diagnostic lives in the bounce's `message/delivery-status`
+body part, and this tool does not read message bodies. And it never reports
+a request as delivered — a silently discarded request looks exactly like an
+accepted one from here.
 
 ## Where the space has gone
 

@@ -53,6 +53,8 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `execute.py` | The only module that moves mail |
 | `deletion.py` | Deletion as negative evidence, counted per account |
 | `unsubscribe.py` | Rank lists worth leaving; send the request (the only sender) |
+| `sends.py` | What was actually sent, so a bounce can be matched against it |
+| `bounces.py` | Did the request land? Identify, attribute, report |
 | `journal.py` | Run journal and undo |
 | `sizes.py` | Measure disk and envelope size per mailbox |
 | `size_report.py` | Render the size grids |
@@ -129,6 +131,17 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   the word "unsubscribe" only when the URL carries no parameters at all.
   Note the failure mode: the send *succeeds*, the tool reports "Sent", and
   the rejection arrives seconds later as a bounce nobody is watching for.
+- **A send that reports success is not a request that landed.** The first
+  live send printed "sent" and was rejected 18 seconds later by a bounce
+  nobody was watching for. `sends.py` records what went out and
+  `unsubscribe --check` looks for the bounce. Note what it cannot do: the
+  SMTP diagnostic lives in the DSN's `message/delivery-status` body part,
+  which this tool does not read, so it reports *which* request bounced and
+  not *why*. And "no bounce seen" is never reported as "delivered" — a
+  silently discarded request looks identical from here. Attribution is on
+  exact matches only (`X-Failed-Recipients`, or a subject token we
+  generated); the literal word "unsubscribe" is excluded by name, because it
+  is the default subject and would match almost any marketing mail.
 - **Mail leaves an autosaved copy of every sent message in Drafts**, and the
   sending script cannot prevent it. `delete newMessage` after `send` was
   tried live and changed nothing — the draft is already on the server by

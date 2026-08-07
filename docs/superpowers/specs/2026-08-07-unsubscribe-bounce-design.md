@@ -57,7 +57,7 @@ Two new modules, one job each:
 | Module | Responsibility |
 |---|---|
 | `sends.py` | The record of what was sent. Append-only JSONL, one file per batch, under `local/unsubscribe-sends/`. |
-| `bounces.py` | Identify bounces and attribute them. Pure functions over `MessageRow`s and header dicts — no snapshotting, no AppleScript, no config. |
+| `bounces.py` | Identify bounces, attribute them, and render the report. Pure functions over `MessageRow`s and header dicts — no snapshotting, no AppleScript, no config. |
 
 `bounces.py` holding no I/O is what makes the matching rules — the
 safety-critical part — testable against synthetic fixtures without a
