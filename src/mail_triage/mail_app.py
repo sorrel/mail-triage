@@ -11,6 +11,11 @@ import subprocess
 from typing import Protocol
 
 
+# AppleScript calls are slow by nature: a ``whose`` query over a large mailbox
+# costs seconds. This is a ceiling for a wedged Mail, not a target.
+OSASCRIPT_TIMEOUT = 120
+
+
 class MailError(RuntimeError):
     """Base class for Mail interaction failures."""
 
@@ -76,7 +81,7 @@ def _escape_applescript_string(value: str) -> str:
 
 def _run(script: str) -> str:
     result = subprocess.run(
-        ["osascript", "-e", script], capture_output=True, text=True, timeout=120
+        ["osascript", "-e", script], capture_output=True, text=True, timeout=OSASCRIPT_TIMEOUT
     )
     if result.returncode != 0:
         error = result.stderr.strip()
@@ -84,6 +89,15 @@ def _run(script: str) -> str:
             raise MailNotRunningError("Mail is not running. Please open it and try again.")
         raise MailError(error)
     return result.stdout.strip()
+
+
+def _run_list(script: str) -> list[str]:
+    """Run ``script`` and split AppleScript's comma-separated list output.
+
+    AppleScript renders a list as ``a, b, c``, so this is the shape every
+    ``get <property> of <plural>`` query comes back in.
+    """
+    return [part.strip() for part in _run(script).split(", ") if part.strip()]
 
 
 # AppleScript/AppleEvent error numbers, trailing in parentheses on the error
@@ -139,8 +153,7 @@ class AppleScriptMail:
             f'tell application "Mail" to get id of messages of mailbox "INBOX" '
             f'of account "{account_escaped}"'
         )
-        output = _run(script)
-        return [int(part) for part in output.split(", ") if part.strip()]
+        return [int(part) for part in _run_list(script)]
 
     def mailbox_names(self, account: str) -> list[str]:
         """Leaf names of the account's mailboxes.
@@ -153,8 +166,7 @@ class AppleScriptMail:
         """
         account_escaped = _escape_applescript_string(account)
         script = f'tell application "Mail" to get name of mailboxes of account "{account_escaped}"'
-        output = _run(script)
-        return [part.strip() for part in output.split(", ") if part.strip()]
+        return _run_list(script)
 
     def _move_script(
         self,

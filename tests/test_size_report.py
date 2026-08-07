@@ -175,7 +175,7 @@ def test_wide_folder_names_do_not_break_alignment():
         line for line in plain(render_account(usage, min_size=0, exact=False)).splitlines()
         if "Wide" in line or "Narrow" in line
     ]
-    from mail_triage.review import display_width
+    from mail_triage.layout import display_width
 
     assert len({display_width(line) for line in lines}) == 1
 
@@ -268,7 +268,7 @@ def test_a_grid_is_ruled_above_its_total():
 
 def test_every_row_is_the_same_width():
     """Rules, guides and headings must all land on the same grid."""
-    from mail_triage.review import display_width
+    from mail_triage.layout import display_width
 
     usage = account(
         leaf("", 0, 0, 0, [

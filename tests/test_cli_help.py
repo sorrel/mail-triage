@@ -7,7 +7,7 @@ from click.testing import CliRunner
 
 from mail_triage.cli import cli
 from mail_triage.cli_help import OTHER, SECTIONS, ColouredGroup
-from mail_triage.review import display_width
+from mail_triage.layout import display_width
 
 
 def plain(text):

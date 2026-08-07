@@ -38,6 +38,7 @@ from urllib.parse import parse_qsl, unquote
 
 from mail_triage.config import Config, Source
 from mail_triage.corpus import normalise_sender
+from mail_triage.layout import display_width, pad
 from mail_triage.deletion import SECONDS_PER_DAY, build_deletion_index
 from mail_triage.envelope import MessageRow
 from mail_triage.folders import folder_path
@@ -48,7 +49,7 @@ _TARGET = re.compile(r"<([^>]+)>")
 # A conservative address shape for the one value we hand to Mail's sender.
 # The target arrives in a header the sender wrote, so it is checked rather
 # than trusted: no spaces, no control characters, exactly one @.
-_ADDRESS = re.compile(r"^[^\s<>@,;\"\\]+@[^\s<>@,;\"\\]+\.[^\s<>@,;\"\\]+$")
+_VALID_ADDRESS = re.compile(r"^[^\s<>@,;\"\\]+@[^\s<>@,;\"\\]+\.[^\s<>@,;\"\\]+$")
 
 
 @dataclass(frozen=True)
@@ -337,8 +338,6 @@ def render_candidates(options: list[UnsubscribeOption]) -> str:
     in a sender's display name occupies two terminal columns and would skew
     every row after it.
     """
-    from mail_triage.review import display_width
-
     rows = []
     for number, option in enumerate(options, start=1):
         share = f"{round(option.ignored_share * 100)}%"
@@ -351,10 +350,7 @@ def render_candidates(options: list[UnsubscribeOption]) -> str:
     ] if rows else []
     lines = []
     for row in rows:
-        padded = [
-            value + " " * (widths[column] - display_width(value))
-            for column, value in enumerate(row)
-        ]
+        padded = [pad(value, widths[column]) for column, value in enumerate(row)]
         lines.append(" " + "  ".join(padded).rstrip())
     return "\n".join(lines)
 
@@ -365,6 +361,6 @@ def send_unsubscribe(option: UnsubscribeOption, mail: MailInterface) -> None:
         raise ValueError(
             f"Cannot send to a {option.method} target; only mailto unsubscribe is supported."
         )
-    if not _ADDRESS.match(option.target):
+    if not _VALID_ADDRESS.match(option.target):
         raise ValueError(f"Refusing to send: {option.target!r} is not an email address.")
     mail.send_mail(option.target, option.subject, option.body)

@@ -10,12 +10,12 @@ on them belongs to a later stage, gated on the user's explicit approval.
 
 from __future__ import annotations
 
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from mail_triage.config import Config
 from mail_triage.folders import account_prefix
+from mail_triage.layout import cell, clip, display_width
 from mail_triage.model.classify import Proposal
 
 SUBJECT_WIDTH = 40
@@ -23,7 +23,15 @@ FOLDER_WIDTH = 28
 SENDER_WIDTH = 28
 ACCOUNT_WIDTH = 10
 
-_WIDE_EMOJI_THRESHOLD = 0x1F300
+# Widths for the two single-line summaries, which pair a clipped subject with
+# a clipped reason and so cannot use the table's column widths.
+REASON_WIDTH = 52
+VETO_WIDTH = 44
+
+# What the summary counts as "confident". ``triage`` passes the run's real
+# ``auto_threshold`` in its place, so the line describes what would actually
+# file itself rather than a number that merely matches the default.
+CONFIDENT_THRESHOLD = 0.9
 
 
 @dataclass(frozen=True)
@@ -45,48 +53,8 @@ class Decision:
         return self.action == "delete"
 
 
-def _char_width(char: str) -> int:
-    """Terminal columns a single character occupies.
-
-    ``len()`` counts every character as one, but emoji and East Asian wide/
-    fullwidth characters occupy two terminal columns. Subjects routinely
-    contain emoji, so padding on ``len()`` would silently misalign columns.
-    """
-    if ord(char) >= _WIDE_EMOJI_THRESHOLD:
-        return 2
-    if unicodedata.east_asian_width(char) in ("W", "F"):
-        return 2
-    return 1
-
-
-def display_width(text: str) -> int:
-    """Terminal columns ``text`` occupies, accounting for wide characters."""
-    return sum(_char_width(char) for char in text)
-
-
-def _clip(text: str, width: int) -> str:
-    """Collapse newlines and truncate to ``width`` display columns, adding an ellipsis."""
-    text = text.replace("\n", " ").strip()
-    if display_width(text) <= width:
-        return text
-    kept: list[str] = []
-    total = 0
-    for char in text:
-        char_width = _char_width(char)
-        if total + char_width > width - 1:
-            break
-        kept.append(char)
-        total += char_width
-    return "".join(kept) + "…"
-
-
-def _pad(text: str, width: int) -> str:
-    """Right-pad to ``width`` display columns. Apply after clipping, before colouring."""
-    return text + " " * max(0, width - display_width(text))
-
-
 def _column(text: str, width: int) -> str:
-    return _pad(_clip(text, width), width)
+    return cell(text, width)
 
 
 def render_table(
@@ -113,14 +81,14 @@ def render_table(
         if not item.is_actionable:
             continue
         destination = item.folder if item.folder is not None else "(delete — your rule)"
-        cell = ""
+        account_cell = ""
         if show_account:
             # "?" rather than a guess: a message from an account that is not
             # configured should look wrong, not plausible.
             name = accounts.get(account_prefix(item.message.mailbox_url), "?")
-            cell = f"{_column(name, ACCOUNT_WIDTH)} "
+            account_cell = f"{_column(name, ACCOUNT_WIDTH)} "
         lines.append(
-            f"{cell}{_column(item.message.sender, SENDER_WIDTH)} "
+            f"{account_cell}{_column(item.message.sender, SENDER_WIDTH)} "
             f"{_column(item.message.subject, SUBJECT_WIDTH)} "
             f"{_column(destination, FOLDER_WIDTH)} {item.confidence:.2f}"
         )
@@ -161,7 +129,11 @@ def _categorise(
     return placed, no_history, missing_folder, inconsistent, vetoed
 
 
-def summarise(proposals: list[Proposal], accounts: dict[str, str] | None = None) -> str:
+def summarise(
+    proposals: list[Proposal],
+    accounts: dict[str, str] | None = None,
+    threshold: float = CONFIDENT_THRESHOLD,
+) -> str:
     """Describe the outcome, giving equal weight to what stays in the inbox.
 
     For most real inboxes the majority of messages stay put — either the
@@ -197,9 +169,10 @@ def summarise(proposals: list[Proposal], accounts: dict[str, str] | None = None)
     lines = [f"{len(placed)} of {total} would be filed; {unplaced_count} staying in the inbox."]
     if placed:
         average = sum(item.confidence for item in placed) / len(placed)
-        confident = sum(1 for item in placed if item.confidence >= 0.9)
+        confident = sum(1 for item in placed if item.confidence >= threshold)
         lines.append(
-            f"  confidence: average {average:.2f}; {confident} of {len(placed)} at 0.90 or above."
+            f"  confidence: average {average:.2f}; {confident} of {len(placed)} "
+            f"at {threshold:.2f} or above."
         )
     # Bills come first and get their own heading: the requirement is that an
     # invoice is *dealt with*, not merely held back, so burying it in a list
@@ -297,7 +270,7 @@ def review(
         destination = item.folder if item.folder is not None else "delete"
         options = "[y/n/d, b=back, or a folder] " if match_folders else "[y/n/d, b=back] "
         raw = prompt(
-            f"{note}{_clip(item.message.subject, SUBJECT_WIDTH)} → {destination}? {options}"
+            f"{note}{clip(item.message.subject, SUBJECT_WIDTH)} → {destination}? {options}"
         ).strip()
         note = ""
         reply = raw.casefold()
@@ -398,7 +371,7 @@ def review_unplaced(proposals: list[Proposal], prompt: Callable[[str], str]) -> 
         item = candidates[index]
         why = item.veto or item.reason
         reply = prompt(
-            f"{_clip(item.message.subject, SUBJECT_WIDTH)} — {_clip(why, 52)} "
+            f"{clip(item.message.subject, SUBJECT_WIDTH)} — {clip(why, REASON_WIDTH)} "
             "[k]eep / [d]elete / [b]ack / [q]uit "
         ).strip().casefold()
         if reply == "q":
@@ -463,7 +436,7 @@ def review_held(proposals: list[Proposal], prompt: Callable[[str], str]) -> list
         item = candidates[index]
         destination = item.held_folder or "nowhere — no folder was predicted"
         reply = prompt(
-            f"{_clip(item.message.subject, SUBJECT_WIDTH)} — {_clip(item.veto or '', 44)}\n"
+            f"{clip(item.message.subject, SUBJECT_WIDTH)} — {clip(item.veto or '', VETO_WIDTH)}\n"
             f"  file → {destination}? [f]ile / [d]elete / [l]eave / [b]ack / [q]uit "
         ).strip().casefold()
         if reply == "q":

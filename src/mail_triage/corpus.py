@@ -18,7 +18,10 @@ from mail_triage.envelope import MessageRow
 from mail_triage.folders import folder_path, is_excluded, normalise_folder
 
 SECONDS_PER_DAY = 86_400
-_ADDRESS = re.compile(r"[\w.+-]+@[\w.-]+")
+# Deliberately lax: this *extracts* an address from a display name such as
+# ``Jane Bloggs <jane@example.com>``. Validation is a different job — see
+# ``unsubscribe._VALID_ADDRESS``, which is strict because it gates a send.
+_ADDRESS_IN_TEXT = re.compile(r"[\w.+-]+@[\w.-]+")
 
 
 @dataclass(frozen=True)
@@ -35,7 +38,7 @@ class TrainingExample:
 
 def sender_domain(address: str) -> str:
     """Extract a lower-cased domain from an address or display-name form."""
-    match = _ADDRESS.search(address or "")
+    match = _ADDRESS_IN_TEXT.search(address or "")
     if not match:
         return ""
     return match.group(0).split("@", 1)[1].casefold()
@@ -43,7 +46,7 @@ def sender_domain(address: str) -> str:
 
 def normalise_sender(address: str) -> str:
     """Extract the bare lower-cased address, discarding any display name."""
-    match = _ADDRESS.search(address or "")
+    match = _ADDRESS_IN_TEXT.search(address or "")
     return match.group(0).casefold() if match else ""
 
 

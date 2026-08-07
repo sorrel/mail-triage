@@ -15,7 +15,12 @@ import click
 
 from mail_triage.envelope import SnapshotError
 
-from mail_triage.review import display_width
+from mail_triage.layout import display_width, pad
+
+# Total columns a help line may occupy. The command name is padded to a common
+# width and the summary gets whatever is left, so the descriptions line up
+# down the whole screen rather than per group.
+HELP_LINE_WIDTH = 80
 
 # Commands in the order they are usually wanted, grouped by the job they do.
 # A command missing from here is not hidden — see ``_grouped``.
@@ -94,8 +99,8 @@ class ColouredGroup(click.Group):
             formatter.write_paragraph()
             formatter.write(f"  {click.style(title, fg='cyan', bold=True)}\n")
             for name in names:
-                summary = by_name[name].get_short_help_str(limit=80 - width)
-                padded = name + " " * (width - display_width(name))
+                summary = by_name[name].get_short_help_str(limit=HELP_LINE_WIDTH - width)
+                padded = pad(name, width)
                 formatter.write(
                     f"    {click.style(padded, fg='yellow', bold=True)}{summary}\n"
                 )

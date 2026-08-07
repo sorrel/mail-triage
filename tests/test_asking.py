@@ -9,7 +9,9 @@ in today's inbox.
 
 import pytest
 
-from mail_triage.asking import UncertainSender, ask, ask_all, rank_uncertain
+from mail_triage.asking import (
+    UncertainSender, ask, ask_all, build_ranking_inputs, rank_uncertain,
+)
 from mail_triage.config import Config
 from mail_triage.corpus import TrainingExample
 from mail_triage.envelope import MessageRow
@@ -367,8 +369,6 @@ def test_ranking_leaves_ordinary_senders_unmarked(tmp_path):
 
 
 def test_billing_senders_are_found_from_recent_subjects(tmp_path):
-    from mail_triage.asking import build_billing_senders
-
     now = 1_800_000_000
     rows = [
         MessageRow(rowid=1, sender="accounts@shop.example", subject="Your invoice from Northwind.",
@@ -383,7 +383,7 @@ def test_billing_senders_are_found_from_recent_subjects(tmp_path):
         def all_messages(self):
             return iter(rows)
 
-    found = build_billing_senders(FakeReader(), config(tmp_path), now=now)
+    _, found = build_ranking_inputs(FakeReader(), config(tmp_path), now=now)
     assert found == {"accounts@shop.example"}
 
 
@@ -431,8 +431,6 @@ def test_skipped_senders_leave_no_rule_behind(tmp_path):
 # --- Yearly counts -----------------------------------------------------------
 
 def test_yearly_counts_ignore_mail_older_than_a_year(tmp_path):
-    from mail_triage.asking import build_yearly_counts
-
     now = 1_800_000_000
     day = 86_400
     rows = [
@@ -451,14 +449,12 @@ def test_yearly_counts_ignore_mail_older_than_a_year(tmp_path):
         def all_messages(self):
             return iter(rows)
 
-    counts = build_yearly_counts(FakeReader(), config(tmp_path), now=now)
+    counts, _ = build_ranking_inputs(FakeReader(), config(tmp_path), now=now)
     assert counts["recent@shop.example"] == 2
     assert "old@shop.example" not in counts
 
 
 def test_yearly_counts_ignore_other_accounts(tmp_path):
-    from mail_triage.asking import build_yearly_counts
-
     now = 1_800_000_000
     rows = [
         MessageRow(rowid=1, sender="a@shop.example", subject="s", date_sent=now - 86_400,
@@ -471,7 +467,7 @@ def test_yearly_counts_ignore_other_accounts(tmp_path):
         def all_messages(self):
             return iter(rows)
 
-    counts = build_yearly_counts(FakeReader(), config(tmp_path), now=now)
+    counts, _ = build_ranking_inputs(FakeReader(), config(tmp_path), now=now)
     assert set(counts) == {"a@shop.example"}
 
 

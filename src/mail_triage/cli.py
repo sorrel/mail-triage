@@ -10,7 +10,7 @@ import click
 
 from mail_triage.accounts import account_names, resolve_account_name, truncate_name
 from mail_triage.asking import (
-    ask_all, build_billing_senders, build_yearly_counts, rank_uncertain,
+    ask_all, build_ranking_inputs, rank_uncertain,
 )
 from mail_triage.cli_help import ColouredGroup
 from mail_triage.config import load_config
@@ -34,6 +34,21 @@ from mail_triage.sizes import build_account_usage, maildata_usage
 from mail_triage.unsubscribe import (
     SelectionError, find_candidates, parse_selection, render_candidates, send_unsubscribe,
 )
+
+
+# How many drift entries the `learn` report lists before summarising the rest.
+DRIFT_REPORT_LIMIT = 20
+
+# Default number of senders `unsubscribe` fetches headers for. Each is an
+# AppleScript round trip, so this bounds the slow part of the command.
+DEFAULT_UNSUBSCRIBE_LIMIT = 20
+
+# Width of the account-name column in `accounts`.
+ACCOUNT_NAME_WIDTH = 22
+
+# Wide enough to blank the longest in-place progress line written by the
+# header guard before the table is printed over it.
+PROGRESS_LINE_WIDTH = 60
 
 
 @click.group(cls=ColouredGroup)
@@ -74,7 +89,7 @@ def accounts() -> None:
                 reader.close()
 
         names = account_names()
-        name_width = 22
+        name_width = ACCOUNT_NAME_WIDTH
         click.echo(f"{'Account':<28}{'Name':<{name_width}}{'Mailboxes':>10}{'Messages':>10}")
         for prefix, mailbox_count, message_count in summary:
             name = truncate_name(resolve_account_name(prefix, names), name_width - 2)
@@ -205,10 +220,10 @@ def learn(drift: bool) -> None:
         entries = model.sender.drift_report()
         if entries:
             click.echo(f"\n{len(entries)} senders changed destination over time:")
-            for entry in entries[:20]:
+            for entry in entries[:DRIFT_REPORT_LIMIT]:
                 click.echo(f"  {entry.key}: '{entry.old_folder}' → '{entry.new_folder}' (by {entry.switch_year})")
-            if len(entries) > 20:
-                click.echo(f"  ... and {len(entries) - 20} more")
+            if len(entries) > DRIFT_REPORT_LIMIT:
+                click.echo(f"  ... and {len(entries) - DRIFT_REPORT_LIMIT} more")
 
 
 def _make_header_guard(mail):
@@ -447,9 +462,11 @@ def triage(
             attachments = reader.attachment_names(m.rowid for m in messages)
             # Ranking basis for the questions below: how often each sender
             # writes, not how many of their messages are in today's inbox.
-            yearly_counts = build_yearly_counts(reader, config) if ask else {}
-            # Senders who send bills are never offered the bin answer.
-            billing_senders = build_billing_senders(reader, config) if ask else set()
+            # Senders who send bills are never offered the bin answer. Both
+            # come from a single scan of the message table.
+            yearly_counts, billing_senders = (
+                build_ranking_inputs(reader, config) if ask else ({}, set())
+            )
         finally:
             reader.close()
     mail = AppleScriptMail()
@@ -465,7 +482,7 @@ def triage(
 
     proposals = classify_all(rules)
     if guard_state["fetches"]:
-        click.echo("\r" + " " * 60 + "\r", nl=False, err=True)
+        click.echo("\r" + " " * PROGRESS_LINE_WIDTH + "\r", nl=False, err=True)
 
     if ask:
         proposals = _ask_about_uncertain_senders(
@@ -475,7 +492,7 @@ def triage(
 
     click.echo(render_table(proposals, {s.prefix: s.name for s in sources}))
     click.echo()
-    click.echo(summarise(proposals, {s.prefix: s.name for s in sources}))
+    click.echo(summarise(proposals, {s.prefix: s.name for s in sources}, config.auto_threshold))
 
     if dry_run:
         click.echo("\nDry run — nothing was moved.")
@@ -643,7 +660,7 @@ def explain(sender: str) -> None:
 )
 @click.option(
     "--limit",
-    default=20,
+    default=DEFAULT_UNSUBSCRIBE_LIMIT,
     help="How many senders to fetch unsubscribe headers for. Each is an "
     "AppleScript round trip, so this is the slow part.",
 )
