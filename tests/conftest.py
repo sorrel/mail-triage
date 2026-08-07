@@ -18,7 +18,8 @@ def build_fixture_db(
     """Create a miniature Envelope Index at ``path``.
 
     Each row dict needs: sender, subject, date_sent, mailbox_url, read.
-    ``flagged`` is optional and defaults to 0. ``labels`` is an optional list
+    ``date_received`` is optional and defaults to ``date_sent``; ``flagged`` is
+    optional and defaults to 0. ``labels`` is an optional list
     of mailbox URLs labelling the message, which is how Gmail inboxes work.
 
     ``stale_labels`` adds ``(message_id, mailbox_url)`` rows for messages that
@@ -35,7 +36,7 @@ def build_fixture_db(
         CREATE TABLE messages (
             ROWID INTEGER PRIMARY KEY,
             sender INTEGER, subject INTEGER NOT NULL,
-            date_sent INTEGER, mailbox INTEGER NOT NULL,
+            date_sent INTEGER, date_received INTEGER, mailbox INTEGER NOT NULL,
             read INTEGER NOT NULL DEFAULT 0,
             flagged INTEGER NOT NULL DEFAULT 0,
             size INTEGER NOT NULL DEFAULT 0
@@ -54,13 +55,14 @@ def build_fixture_db(
 
     for index, row in enumerate(rows, start=1):
         db.execute(
-            "INSERT INTO messages (ROWID, sender, subject, date_sent, mailbox, read, flagged, size) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (ROWID, sender, subject, date_sent, date_received, "
+            "mailbox, read, flagged, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 row.get("rowid", index),
                 intern("addresses", "address", addresses, row["sender"]),
                 intern("subjects", "subject", subjects, row["subject"]),
                 row["date_sent"],
+                row.get("date_received", row["date_sent"]),
                 intern("mailboxes", "url", mailboxes, row["mailbox_url"]),
                 int(row.get("read", 0)),
                 int(row.get("flagged", 0)),

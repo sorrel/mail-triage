@@ -17,7 +17,7 @@ from mail_triage.folders import account_prefix
 DEFAULT_DB_PATH = Path.home() / "Library" / "Mail" / "V10" / "MailData" / "Envelope Index"
 
 _BASE_QUERY = """
-    SELECT m.ROWID, a.address, s.subject, m.date_sent, b.url, m.read, m.flagged
+    SELECT m.ROWID, a.address, s.subject, m.date_sent, m.date_received, b.url, m.read, m.flagged
     FROM messages m
     JOIN addresses a ON a.ROWID = m.sender
     JOIN subjects s ON s.ROWID = m.subject
@@ -43,6 +43,12 @@ class MessageRow:
     mailbox_url: str
     read: bool
     flagged: bool = False
+    # When the message reached *us*. ``date_sent`` is the sending machine's
+    # clock, which is fine for ordering a correspondent's mail but not for
+    # "did this arrive after we sent that": a bouncing relay with a skewed
+    # clock would fall outside any window computed from it. Defaulted so
+    # callers constructing rows by hand (the tests do) need not supply it.
+    date_received: int = 0
 
 
 SNAPSHOT_ATTEMPTS = 5
@@ -125,9 +131,9 @@ class EnvelopeReader:
         self.connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
 
     def _rows(self, where: str = "", params: tuple = ()) -> Iterator[MessageRow]:
-        for rowid, sender, subject, date_sent, url, read, flagged in self.connection.execute(
-            _BASE_QUERY + where, params
-        ):
+        for (
+            rowid, sender, subject, date_sent, date_received, url, read, flagged
+        ) in self.connection.execute(_BASE_QUERY + where, params):
             yield MessageRow(
                 rowid=rowid,
                 sender=sender,
@@ -136,6 +142,7 @@ class EnvelopeReader:
                 mailbox_url=url,
                 read=bool(read),
                 flagged=bool(flagged),
+                date_received=date_received or 0,
             )
 
     def all_messages(self) -> Iterator[MessageRow]:

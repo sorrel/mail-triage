@@ -315,7 +315,7 @@ def test_a_corrupt_line_is_skipped_and_the_rest_survive(tmp_path):
     record_send(config, "batch", _request(sender="a@x.example"))
     path = sends_dir(config) / "batch.jsonl"
     with path.open("a") as handle:
-        handle.write('{"sender": "b@y.exam\n')
+        handle.write('{"sender": "b@y.example", "to_addr\n')
     record_send(config, "batch", _request(sender="c@z.example"))
 
     with warnings.catch_warnings(record=True) as caught:
