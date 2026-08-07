@@ -289,6 +289,76 @@ def find_candidates(
     return rank_candidates(options)
 
 
+class SelectionError(ValueError):
+    """What was typed at the "which of these?" prompt was not a selection."""
+
+
+def parse_selection(typed: str, count: int) -> list[int]:
+    """Turn "1, 3-5" into [1, 3, 4, 5], one-based, sorted, deduplicated.
+
+    Anything unrecognised raises rather than being skipped. A selection is a
+    list of things to unsubscribe from: quietly dropping a number the user
+    typed, or quietly keeping one off the end, both act on a set they did not
+    choose.
+    """
+    if not typed or not typed.strip():
+        return []
+    chosen: set[int] = set()
+    for part in typed.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part.lstrip("-"):
+            first, _, last = part.partition("-")
+            try:
+                start, end = int(first.strip()), int(last.strip())
+            except ValueError:
+                raise SelectionError(f"{part!r} is not a number or a range.") from None
+            if start > end:
+                raise SelectionError(f"{part!r} runs backwards.")
+            chosen.update(range(start, end + 1))
+        else:
+            try:
+                chosen.add(int(part))
+            except ValueError:
+                raise SelectionError(f"{part!r} is not a number or a range.") from None
+    off_the_end = [number for number in sorted(chosen) if number < 1 or number > count]
+    if off_the_end:
+        raise SelectionError(
+            f"There is no {off_the_end[0]} in the list — the numbers run from 1 and {count}."
+        )
+    return sorted(chosen)
+
+
+def render_candidates(options: list[UnsubscribeOption]) -> str:
+    """The whole list, numbered, to choose from.
+
+    Widths are measured with ``display_width`` rather than ``len``: an emoji
+    in a sender's display name occupies two terminal columns and would skew
+    every row after it.
+    """
+    from mail_triage.review import display_width
+
+    rows = []
+    for number, option in enumerate(options, start=1):
+        share = f"{round(option.ignored_share * 100)}%"
+        counts = f"{option.deleted_count} binned, {option.unread_count} unread"
+        note = "mailto" if option.method == "mailto" else "http — open in a browser yourself"
+        rows.append((str(number), option.sender, option.account, counts, share, note))
+
+    widths = [
+        max(display_width(row[column]) for row in rows) for column in range(len(rows[0]))
+    ] if rows else []
+    lines = []
+    for row in rows:
+        padded = [
+            value + " " * (widths[column] - display_width(value))
+            for column, value in enumerate(row)
+        ]
+        lines.append(" " + "  ".join(padded).rstrip())
+    return "\n".join(lines)
+
+
 def send_unsubscribe(option: UnsubscribeOption, mail: MailInterface) -> None:
     """Send the unsubscribe request. Only mailto targets are supported."""
     if option.method != "mailto":

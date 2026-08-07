@@ -1110,9 +1110,13 @@ def test_auto_with_nothing_confident_enough_moves_nothing(tmp_path, monkeypatch)
 
 # --- unsubscribe ----------------------------------------------------------
 #
-# The only command that sends mail, so the confirm loop is tested at the CLI
-# level rather than only in test_unsubscribe.py: a mis-wired prompt would
-# send real mail whilst every unit test still passed.
+# The only command that sends mail, so the choosing is tested at the CLI level
+# rather than only in test_unsubscribe.py: a mis-wired prompt would send real
+# mail whilst every unit test still passed.
+#
+# The interaction is list-then-choose (Task 19). It replaced a one-at-a-time
+# confirm loop, which made you answer seventeen questions to reach the one you
+# wanted — the ranking is a view, not a queue.
 
 
 def _stub_candidates(monkeypatch, options):
@@ -1141,18 +1145,31 @@ class _NullReader:
 def _option(sender="news@x.example", **overrides):
     from mail_triage.unsubscribe import UnsubscribeOption
 
+    domain = sender.split("@", 1)[1]
     values = dict(
         sender=sender,
-        domain=sender.split("@", 1)[1],
+        domain=domain,
         method="mailto",
-        target=f"leave@{sender.split('@', 1)[1]}",
+        target=f"leave@{domain}",
         message_count=4,
         unread_count=4,
         deleted_count=22,
         account="iCloud",
+        subject="unsubscribe",
+        body="unsubscribe",
     )
     values.update(overrides)
     return UnsubscribeOption(**values)
+
+
+def test_unsubscribe_lists_every_candidate_before_asking(tmp_path, monkeypatch):
+    options = [_option("a@x.example"), _option("b@y.example")]
+    runner, mail = _sending_runner(tmp_path, monkeypatch, options)
+    result = runner.invoke(cli, ["unsubscribe"], input="\n")
+    assert result.exit_code == 0
+    assert "a@x.example" in result.output
+    assert "b@y.example" in result.output
+    assert mail.sent == []
 
 
 def test_unsubscribe_dry_run_sends_nothing(tmp_path, monkeypatch):
@@ -1160,56 +1177,85 @@ def test_unsubscribe_dry_run_sends_nothing(tmp_path, monkeypatch):
     result = runner.invoke(cli, ["unsubscribe", "--dry-run"])
     assert result.exit_code == 0
     assert mail.sent == []
-    assert "Would unsubscribe via leave@x.example" in result.output
     assert "22 binned" in result.output
+    assert "Nothing sent (--dry-run)." in result.output
 
 
-def test_unsubscribe_needs_a_yes(tmp_path, monkeypatch):
-    runner, mail = _sending_runner(tmp_path, monkeypatch, [_option()])
-    result = runner.invoke(cli, ["unsubscribe"], input="n\n")
-    assert result.exit_code == 0
-    assert mail.sent == []
-    assert "Sent 0, skipped 1." in result.output
-
-
-def test_unsubscribe_defaults_to_no_on_a_bare_return(tmp_path, monkeypatch):
+def test_unsubscribe_selecting_nothing_sends_nothing(tmp_path, monkeypatch):
     runner, mail = _sending_runner(tmp_path, monkeypatch, [_option()])
     result = runner.invoke(cli, ["unsubscribe"], input="\n")
     assert result.exit_code == 0
     assert mail.sent == []
+    assert "Nothing selected" in result.output
 
 
-def test_unsubscribe_sends_on_a_yes(tmp_path, monkeypatch):
-    runner, mail = _sending_runner(tmp_path, monkeypatch, [_option()])
-    result = runner.invoke(cli, ["unsubscribe"], input="y\n")
-    assert result.exit_code == 0
-    assert mail.sent == [("leave@x.example", "unsubscribe")]
-    assert "Sent 1, skipped 0." in result.output
-
-
-def test_unsubscribe_asks_per_sender(tmp_path, monkeypatch):
-    """One 'y' must not carry over to the next sender."""
+def test_unsubscribe_sends_the_one_you_picked(tmp_path, monkeypatch):
     options = [_option("a@x.example"), _option("b@y.example")]
     runner, mail = _sending_runner(tmp_path, monkeypatch, options)
-    result = runner.invoke(cli, ["unsubscribe"], input="y\nn\n")
+    result = runner.invoke(cli, ["unsubscribe"], input="2\ny\n")
     assert result.exit_code == 0
-    assert mail.sent == [("leave@x.example", "unsubscribe")]
+    assert mail.sent == [("leave@y.example", "unsubscribe")]
 
 
-def test_unsubscribe_never_offers_an_http_target(tmp_path, monkeypatch):
-    http = _option(method="http", target="https://x.example/u")
-    runner, mail = _sending_runner(tmp_path, monkeypatch, [http])
-    result = runner.invoke(cli, ["unsubscribe"], input="y\n")
+def test_unsubscribe_sends_several_at_once(tmp_path, monkeypatch):
+    """Deciding about a list is one job, not seven."""
+    options = [_option("a@x.example"), _option("b@y.example"), _option("c@z.example")]
+    runner, mail = _sending_runner(tmp_path, monkeypatch, options)
+    result = runner.invoke(cli, ["unsubscribe"], input="1,3\ny\n")
+    assert result.exit_code == 0
+    assert mail.sent == [
+        ("leave@x.example", "unsubscribe"),
+        ("leave@z.example", "unsubscribe"),
+    ]
+
+
+def test_unsubscribe_confirms_the_selection_before_sending(tmp_path, monkeypatch):
+    """The number chooses; the confirmation is the second gate, not the first."""
+    runner, mail = _sending_runner(tmp_path, monkeypatch, [_option()])
+    result = runner.invoke(cli, ["unsubscribe"], input="1\nn\n")
     assert result.exit_code == 0
     assert mail.sent == []
-    assert "do it yourself" in result.output
+    assert "Nothing sent." in result.output
 
 
-def test_unsubscribe_sender_filter_offers_only_that_sender(tmp_path, monkeypatch):
-    """Naming the sender is how a first send is aimed; position is not stable."""
+def test_unsubscribe_sends_the_token_from_the_header(tmp_path, monkeypatch):
+    """The subject is the subscriber token; the wrong one bounces."""
+    runner, mail = _sending_runner(tmp_path, monkeypatch, [_option(subject="tok/en-9")])
+    result = runner.invoke(cli, ["unsubscribe"], input="1\ny\n")
+    assert result.exit_code == 0
+    assert mail.sent == [("leave@x.example", "tok/en-9")]
+
+
+def test_unsubscribe_refuses_a_picked_http_sender(tmp_path, monkeypatch):
+    """Picking it misreads the list; sending the rest anyway would hide that."""
+    options = [_option("a@x.example", method="http", target="https://x.example/u"),
+               _option("b@y.example")]
+    runner, mail = _sending_runner(tmp_path, monkeypatch, options)
+    result = runner.invoke(cli, ["unsubscribe"], input="1,2\ny\n")
+    assert result.exit_code != 0
+    assert mail.sent == []
+    assert "HTTP-only" in result.output
+
+
+def test_unsubscribe_rejects_a_number_off_the_end(tmp_path, monkeypatch):
+    runner, mail = _sending_runner(tmp_path, monkeypatch, [_option()])
+    result = runner.invoke(cli, ["unsubscribe"], input="7\n")
+    assert result.exit_code != 0
+    assert mail.sent == []
+    assert "no 7 in the list" in result.output
+
+
+def test_unsubscribe_warns_that_a_send_may_still_bounce(tmp_path, monkeypatch):
+    """The first live send reported success and was rejected 18s later."""
+    runner, _ = _sending_runner(tmp_path, monkeypatch, [_option()])
+    result = runner.invoke(cli, ["unsubscribe"], input="1\ny\n")
+    assert "mailer-daemon" in result.output
+
+
+def test_unsubscribe_sender_filter_narrows_the_list(tmp_path, monkeypatch):
     options = [_option("a@x.example"), _option("b@y.example")]
     runner, mail = _sending_runner(tmp_path, monkeypatch, options)
-    result = runner.invoke(cli, ["unsubscribe", "--sender", "b@y"], input="y\n")
+    result = runner.invoke(cli, ["unsubscribe", "--sender", "b@y"], input="1\ny\n")
     assert result.exit_code == 0
     assert mail.sent == [("leave@y.example", "unsubscribe")]
     assert "a@x.example" not in result.output

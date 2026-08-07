@@ -3323,7 +3323,7 @@ git commit -m "feat: optional LLM tier with redaction, disabled by default"
 
 ---
 
-### Task 16: Unsubscribe suggestions — CHECKPOINT
+### Task 16: Unsubscribe suggestions — COMPLETE 6 August 2026 (PRs #16, #17)
 
 **Files:**
 - Create: `src/mail_triage/unsubscribe.py`
@@ -3703,6 +3703,100 @@ Two things worth recording:
 
 Read status is not a concern: the AppleScript only ever issues
 `move theMessage to theBox` and never sets `read`.
+
+---
+
+### Task 19: List first, then choose — COMPLETE 6 August 2026
+
+**Files:** `src/mail_triage/unsubscribe.py`, `src/mail_triage/review.py`,
+`src/mail_triage/cli.py`. **Test:** `tests/test_unsubscribe.py`,
+`tests/test_cli.py`.
+
+Task 16 shipped a one-at-a-time confirm loop, walking down the ranking and
+asking about each sender in turn. The user's expectation (6 August 2026) was
+the opposite shape: **type the command, get the whole list, then choose from
+it.** Seventeen sequential prompts to reach the one you wanted is the wrong
+interaction — the ranking is a *view*, not a queue.
+
+Behaviour: print the candidates as a numbered table (sender, account, counts,
+share, method), then ask which to act on. Accept several — "1,4,7" and "1-3"
+— because deciding about a list is one job, not seven. Confirm the selection
+as a set before anything is sent, and report per-sender outcomes afterwards.
+`--dry-run` prints the table and stops, as now.
+
+Selecting a number *is* the explicit per-sender consent the spec requires;
+the summary confirmation is the second gate, not the first.
+
+---
+
+### Task 20: A reported send is not a completed unsubscribe
+
+**Files:** `src/mail_triage/unsubscribe.py`, `src/mail_triage/cli.py`.
+**Test:** `tests/test_unsubscribe.py`.
+
+The first live send reported "Sent." and was rejected 18 seconds later —
+`554 Message rejected: The unsubscribe request has invalid form` — as a
+bounce from `mailer-daemon` that nothing was watching for. It was found only
+by going looking. A batch could report a perfect score with every request
+bounced.
+
+Behaviour: after sending, check for bounces referencing the recipients just
+written to, and report them. The evidence is already reachable — the bounce
+arrives in the inbox within seconds and names the recipient in its body —
+but the envelope database stores no body, so this needs a header/content
+fetch or a subject-and-recency match. Decide which when writing the task; do
+not guess at a rule that quietly matches the wrong message.
+
+Open question: how long to wait. A bounce in 18 seconds was luck as much as
+anything, and a tool that blocks for a minute per send is unpleasant. A
+`unsubscribe --check` that reviews the last run's sends is probably the
+better shape than a wait inside the send loop.
+
+---
+
+### Task 21: HTTP one-click — decide, then implement the decision
+
+**Files:** TBD. **Test:** TBD.
+
+Nine of seventeen real candidates offer no `mailto:` at all, including every
+Substack and the highest-volume senders. Since the 2024 bulk-sender rules,
+RFC 8058 one-click over HTTPS is what large senders implement; `mailto:` is
+the legacy path. The restriction therefore costs the majority of the list —
+and note that hmv carried `List-Unsubscribe-Post: List-Unsubscribe=One-Click`
+whilst its `mailto:` was the one that bounced, which is the pattern in
+miniature.
+
+Three shapes, in ascending order of what they widen:
+
+1. **Open the URL in the browser** on selection. No network code in the tool,
+   no SSRF surface, the request comes from the browser as if clicked. Cheap.
+2. **Guarded one-click**: require `List-Unsubscribe-Post` (not currently
+   captured), HTTPS only, resolve the host and refuse loopback/private/
+   link-local, no redirects, POST exactly `List-Unsubscribe=One-Click`, short
+   timeout, no cookies. This is the first outbound network request the tool
+   would ever make — a real widening of what it is.
+3. **Leave it**: keep printing the URL to click yourself.
+
+Not a coding task until the choice is made. Undecided as of 6 August 2026.
+
+---
+
+### Task 22: The Drafts copy — decide whether to tidy it
+
+**Files:** `src/mail_triage/mail_app.py`. **Test:** `tests/test_unsubscribe.py`.
+
+Mail leaves an autosaved copy of every sent message in Drafts. Measured
+twice on 6 August 2026 (sent 19:48:56 / draft 19:49:25; sent 20:25:15 /
+draft 20:25:25). `delete newMessage` after the send does not prevent it —
+tried live, no effect, because the draft has already reached the server —
+and that attempt was reverted rather than left in looking like a fix.
+
+The only route left is to find the draft in the Drafts mailbox afterwards and
+bin it, matched on subject and recipient. That is deleting stored mail on a
+match, where a wrong match destroys something the user wrote. **Needs an
+explicit decision before any implementation**, and if taken it wants the
+strictest possible match plus a dry run that names the message it would
+delete.
 
 ---
 

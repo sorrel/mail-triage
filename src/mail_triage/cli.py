@@ -31,7 +31,9 @@ from mail_triage.size_report import (
     parse_size, render_account, render_maildata, render_summary,
 )
 from mail_triage.sizes import build_account_usage, maildata_usage
-from mail_triage.unsubscribe import find_candidates, send_unsubscribe
+from mail_triage.unsubscribe import (
+    SelectionError, find_candidates, parse_selection, render_candidates, send_unsubscribe,
+)
 
 
 @click.group(cls=ColouredGroup)
@@ -654,17 +656,21 @@ def explain(sender: str) -> None:
     "ranking shifts as mail arrives.",
 )
 def unsubscribe(dry_run: bool, limit: int, sender: str | None) -> None:
-    """Suggest lists worth leaving, and send the request if you say so.
+    """List the lists worth leaving, then unsubscribe from the ones you pick.
 
-    This is the only command that sends mail. It asks about one sender at a
-    time and sends only on an explicit 'y'; anything else skips. Ranking
-    counts the mail you binned as well as the mail you never opened —
+    This is the only command that sends mail. It prints the whole ranked list
+    and asks which of them to act on — several at once if you like ("1,4" or
+    "1-3"). Nothing is sent for a sender you did not name, and the selection
+    is confirmed as a set before anything goes out.
+
+    Ranking counts the mail you binned as well as the mail you never opened:
     deleting a newsletter unread is the clearest statement there is that you
     do not want it.
 
-    Only 'mailto:' unsubscribe targets are used. HTTP one-click unsubscribe
-    is deliberately unsupported: it would mean firing off arbitrary web
-    requests to an address the sender chose.
+    Only 'mailto:' unsubscribe targets are sent. HTTP one-click unsubscribe is
+    deliberately unsupported — it would mean firing off arbitrary web requests
+    to an address the sender chose — so those are listed with their URL for
+    you to open yourself.
     """
     config = load_config()
     mail = AppleScriptMail()
@@ -690,39 +696,76 @@ def unsubscribe(dry_run: bool, limit: int, sender: str | None) -> None:
         click.echo("Nothing to unsubscribe from — no candidate carried a List-Unsubscribe header.")
         return
 
-    sent = 0
-    skipped = 0
-    for option in candidates:
-        share = round(option.ignored_share * 100)
-        binned = f", {option.deleted_count} binned" if option.deleted_count else ""
-        click.echo(
-            f"\n{click.style(option.sender, fg='yellow', bold=True)} "
-            f"[{option.account}] — {option.message_count} in the inbox, "
-            f"{option.unread_count} unread{binned} ({share}% ignored)"
+    click.echo(render_candidates(candidates))
+    sendable = [number for number, option in enumerate(candidates, start=1)
+                if option.method == "mailto"]
+    click.echo(
+        f"\n{len(candidates)} candidates, {len(sendable)} of them sendable "
+        f"({len(candidates) - len(sendable)} are HTTP-only — open those yourself)."
+    )
+
+    if dry_run:
+        click.echo("Nothing sent (--dry-run).")
+        return
+
+    if not sendable:
+        click.echo("None of these can be unsubscribed from by email.")
+        return
+
+    try:
+        typed = click.prompt(
+            "Which to unsubscribe from? (numbers, or Enter for none)",
+            default="",
+            show_default=False,
         )
-        if option.method != "mailto":
-            click.echo(f"  Only an HTTP unsubscribe ({option.target}) — skipping, do it yourself.")
-            skipped += 1
-            continue
-        if dry_run:
-            click.echo(f"  Would unsubscribe via {option.target}")
-            continue
-        if not click.confirm(f"  Unsubscribe via {option.target}?", default=False):
-            skipped += 1
-            continue
+    except click.Abort:
+        click.echo("\nNothing sent.")
+        return
+    try:
+        chosen = parse_selection(typed, len(candidates))
+    except SelectionError as error:
+        raise click.ClickException(str(error)) from error
+    if not chosen:
+        click.echo("Nothing selected, nothing sent.")
+        return
+
+    # An HTTP-only sender cannot be acted on, and picking its number is a
+    # misreading of the list rather than an instruction — say so and stop,
+    # instead of sending the rest and mentioning it afterwards.
+    picked = [(number, candidates[number - 1]) for number in chosen]
+    unsendable = [number for number, option in picked if option.method != "mailto"]
+    if unsendable:
+        raise click.ClickException(
+            f"{', '.join(str(n) for n in unsendable)} "
+            f"{'is' if len(unsendable) == 1 else 'are'} HTTP-only and cannot be sent to. "
+            "Open the URL yourself, and choose again without it."
+        )
+
+    click.echo("\nAbout to unsubscribe from:")
+    for number, option in picked:
+        click.echo(f"  {number}. {option.sender} → {option.target}")
+    if not click.confirm(f"Send {len(picked)} unsubscribe "
+                         f"{'request' if len(picked) == 1 else 'requests'}?", default=False):
+        click.echo("Nothing sent.")
+        return
+
+    sent = 0
+    failed = 0
+    for number, option in picked:
         try:
             send_unsubscribe(option, mail)
         except (ValueError, MailError) as error:
-            click.echo(click.style(f"  Not sent: {error}", fg="red"))
-            skipped += 1
+            click.echo(click.style(f"  {option.sender}: not sent — {error}", fg="red"))
+            failed += 1
             continue
         sent += 1
-        click.echo(click.style("  Sent.", fg="green"))
+        click.echo(click.style(f"  {option.sender}: sent", fg="green"))
 
-    if dry_run:
-        click.echo(f"\n{len(candidates)} candidates. Nothing sent (--dry-run).")
-    else:
-        click.echo(f"\nSent {sent}, skipped {skipped}.")
+    click.echo(f"\nSent {sent}, failed {failed}.")
+    click.echo(
+        "A sent request is not a completed unsubscribe: a rejection comes back "
+        "as a bounce moments later. Check your inbox for mailer-daemon."
+    )
 
 
 @cli.command()
