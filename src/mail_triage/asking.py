@@ -34,14 +34,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mail_triage.config import Config
-from mail_triage.corpus import normalise_sender
+from mail_triage.corpus import SECONDS_PER_DAY, normalise_sender
 from mail_triage.folders import normalise_folder
 from mail_triage.model.classify import Proposal
 from mail_triage.invoices import invoice_reason
 from mail_triage.model.store import TrainedModel
 from mail_triage.rules import Rule, record_rule
 
-SECONDS_PER_DAY = 86_400
 YEAR_DAYS = 365
 
 # Five questions a run: enough to clear the measured backlog in five sittings,
@@ -68,55 +67,50 @@ class UncertainSender:
     sends_invoices: bool = False
 
 
-def build_yearly_counts(reader, config: Config, now: int | None = None) -> dict[str, int]:
-    """Count each sender's messages over the last year, for ranking.
+def _recent_senders(reader, config: Config, now: int | None = None):
+    """Yield ``(sender, message)`` for trainable mail from the last year.
 
-    Every folder counts, deletions included: this measures how often a sender
-    *writes*, not what was done with it. The one-year window matches the
-    ``half_life_days`` default, so a sender who has gone quiet does not consume
-    one of five questions.
+    The one-year window matches the ``half_life_days`` default, so a sender
+    who has gone quiet does not consume one of the questions. Every folder
+    counts, deletions included: this is about how often a sender *writes*,
+    not what was done with the result.
     """
     if now is None:
         now = int(time.time())
     cutoff = now - YEAR_DAYS * SECONDS_PER_DAY
     prefixes = tuple(config.training_prefixes)
+    for message in reader.all_messages():
+        if not message.date_sent or message.date_sent < cutoff:
+            continue
+        if not message.mailbox_url.startswith(prefixes):
+            continue
+        sender = normalise_sender(message.sender)
+        if sender:
+            yield sender, message
+
+
+def build_ranking_inputs(
+    reader, config: Config, now: int | None = None
+) -> tuple[dict[str, int], set[str]]:
+    """Both sender-level facts the asking step needs, from one pass.
+
+    Counts and billing senders were previously built by two functions that
+    scanned the whole message table separately. They share a window, a filter
+    and a normalisation step, so they are gathered together: the scan is the
+    expensive part, and ``triage`` always wants both or neither.
+
+    Returns ``(yearly_counts, billing_senders)``. A billing sender is one
+    whose recent subject lines look like a bill; that flag withholds the bin
+    answer, whilst the per-message invoice guard — which does read
+    attachments — remains the real protection for any individual bill.
+    """
     counts: dict[str, int] = {}
-    for message in reader.all_messages():
-        if not message.date_sent or message.date_sent < cutoff:
-            continue
-        if not message.mailbox_url.startswith(prefixes):
-            continue
-        sender = normalise_sender(message.sender)
-        if not sender:
-            continue
+    billing: set[str] = set()
+    for sender, message in _recent_senders(reader, config, now):
         counts[sender] = counts.get(sender, 0) + 1
-    return counts
-
-
-def build_billing_senders(reader, config: Config, now: int | None = None) -> set[str]:
-    """Senders whose recent mail includes anything that looks like a bill.
-
-    Subject lines only, deliberately: this is a sender-level flag used to
-    withhold the bin answer, and the per-message invoice guard — which does
-    read attachments — remains the real protection for any individual bill.
-    Cheap defence in depth rather than a second detector.
-    """
-    if now is None:
-        now = int(time.time())
-    cutoff = now - YEAR_DAYS * SECONDS_PER_DAY
-    prefixes = tuple(config.training_prefixes)
-    senders: set[str] = set()
-    for message in reader.all_messages():
-        if not message.date_sent or message.date_sent < cutoff:
-            continue
-        if not message.mailbox_url.startswith(prefixes):
-            continue
-        sender = normalise_sender(message.sender)
-        if not sender or sender in senders:
-            continue
-        if invoice_reason(message.subject) is not None:
-            senders.add(sender)
-    return senders
+        if sender not in billing and invoice_reason(message.subject) is not None:
+            billing.add(sender)
+    return counts, billing
 
 
 def _is_uncertain(proposal: Proposal) -> bool:

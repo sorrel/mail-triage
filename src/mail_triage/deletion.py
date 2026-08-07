@@ -38,10 +38,8 @@ import time
 from dataclasses import dataclass
 
 from mail_triage.config import Config, Source
-from mail_triage.corpus import normalise_sender
+from mail_triage.corpus import SECONDS_PER_DAY, normalise_sender
 from mail_triage.folders import account_prefix, folder_path, is_excluded
-
-SECONDS_PER_DAY = 86_400
 
 # Folders that mean "this message was deleted". Deliberately separate from
 # Config.training_exclusions, which also excludes INBOX, Junk, Sent, etc. —

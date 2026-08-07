@@ -3,11 +3,9 @@
 Kept apart from ``sizes.py`` so that measurement can be tested without a
 terminal and layout without a mail store.
 
-Two rules govern everything here. Widths come from ``review.display_width``,
-never ``len()`` — folder names contain emoji, and padding on ``len()``
-silently misaligns every column to their right. And colour is applied *after*
-padding is computed, because an ANSI escape occupies no columns but would be
-counted as several.
+Layout arithmetic comes from ``layout``: widths are measured in terminal
+columns rather than characters, and colour is applied *after* padding is
+computed. See that module for why both matter.
 """
 
 from __future__ import annotations
@@ -17,10 +15,10 @@ import re
 import click
 
 from mail_triage.accounts import NOT_IN_MAIL
-from mail_triage.review import display_width
+from mail_triage.layout import cell, display_width
 from mail_triage.sizes import AccountUsage, FolderNode
 
-FOLDER_WIDTH = 44
+GRID_FOLDER_WIDTH = 44
 NUMBER_WIDTH = 12
 COUNT_WIDTH = 9
 
@@ -32,7 +30,7 @@ HIGHLIGHT_SHARE = 0.20
 NOTABLE_SHARE = 0.05
 NEGLIGIBLE_SHARE = 0.01
 
-GRID_WIDTH = FOLDER_WIDTH + COUNT_WIDTH + NUMBER_WIDTH * 2 + 3
+GRID_WIDTH = GRID_FOLDER_WIDTH + COUNT_WIDTH + NUMBER_WIDTH * 2 + 3
 
 # Guides drawn down the left of the folder column. Dark-terminal friendly:
 # dimmed box-drawing rather than another colour competing with the figures.
@@ -81,28 +79,12 @@ def parse_size(text: str) -> int:
     return int(float(number) * _SUFFIXES[suffix.lower() if suffix else None])
 
 
-def _cell(text: str, width: int, right: bool = False) -> str:
-    """Pad or clip ``text`` to ``width`` display columns."""
-    if display_width(text) > width:
-        kept: list[str] = []
-        total = 0
-        for char in text:
-            step = display_width(char)
-            if total + step > width - 1:
-                break
-            kept.append(char)
-            total += step
-        text = "".join(kept) + "…"
-    padding = " " * max(width - display_width(text), 0)
-    return text + padding if not right else padding + text
-
-
 def _heading(label: str = "Folder") -> str:
     line = (
-        f"{_cell(label, FOLDER_WIDTH)} "
-        f"{_cell('Messages', COUNT_WIDTH, right=True)} "
-        f"{_cell('In Mail', NUMBER_WIDTH, right=True)} "
-        f"{_cell('On disk', NUMBER_WIDTH, right=True)}"
+        f"{cell(label, GRID_FOLDER_WIDTH)} "
+        f"{cell('Messages', COUNT_WIDTH, right=True)} "
+        f"{cell('In Mail', NUMBER_WIDTH, right=True)} "
+        f"{cell('On disk', NUMBER_WIDTH, right=True)}"
     )
     return click.style(line, fg="bright_black", bold=True)
 
@@ -127,7 +109,7 @@ def _disk_cell(text: str, share: float | None) -> str:
     with the rows above it, and dimming it would bury the very figure the
     grid exists to report.
     """
-    padded = _cell(text, NUMBER_WIDTH, right=True)
+    padded = cell(text, NUMBER_WIDTH, right=True)
     if text == NO_FIGURE:
         return click.style(padded, dim=True)
     if share is None:
@@ -156,13 +138,13 @@ def _row(
     occupies no columns but would be counted as several, so colouring first
     would throw the whole grid out of alignment.
     """
-    name = _cell(label, FOLDER_WIDTH - display_width(guide))
+    name = cell(label, GRID_FOLDER_WIDTH - display_width(guide))
     if bold_label:
         name = click.style(name, bold=True)
     return (
         f"{click.style(guide, fg='bright_black') if guide else ''}{name} "
-        f"{click.style(_cell(count, COUNT_WIDTH, right=True), dim=True)} "
-        f"{click.style(_cell(envelope, NUMBER_WIDTH, right=True), fg='bright_blue')} "
+        f"{click.style(cell(count, COUNT_WIDTH, right=True), dim=True)} "
+        f"{click.style(cell(envelope, NUMBER_WIDTH, right=True), fg='bright_blue')} "
         f"{_disk_cell(disk, share)}"
     )
 

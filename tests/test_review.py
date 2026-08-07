@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from mail_triage.envelope import MessageRow
 from mail_triage.model.classify import Proposal
+from mail_triage.layout import display_width
 from mail_triage.review import (
-    Decision, display_width, held_back, render_table, review, review_held,
+    Decision, held_back, render_table, review, review_held,
     review_unplaced, summarise,
 )
 
