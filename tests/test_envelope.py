@@ -10,6 +10,43 @@ from mail_triage.envelope import (
     snapshot_database,
 )
 
+from tests.conftest import build_fixture_db
+
+
+def _one_row_reader(tmp_path, **extra):
+    row = {
+        "sender": "someone@work.example",
+        "subject": "Hello",
+        "date_sent": 1_700_000_000,
+        "mailbox_url": "imap://AAAAAAAA/INBOX",
+        "read": 0,
+    }
+    row.update(extra)
+    db_path = tmp_path / "Envelope Index"
+    build_fixture_db(db_path, [row])
+    return EnvelopeReader(db_path)
+
+
+def test_message_row_carries_date_received(tmp_path):
+    """The bounce window is measured on our clock, not the sender's."""
+    reader = _one_row_reader(tmp_path, date_received=1_700_000_900)
+    try:
+        row = next(iter(reader.all_messages()))
+    finally:
+        reader.close()
+    assert row.date_sent == 1_700_000_000
+    assert row.date_received == 1_700_000_900
+
+
+def test_date_received_defaults_to_date_sent_in_fixtures(tmp_path):
+    """Every existing fixture omits it; they must keep working."""
+    reader = _one_row_reader(tmp_path)
+    try:
+        row = next(iter(reader.all_messages()))
+    finally:
+        reader.close()
+    assert row.date_received == 1_700_000_000
+
 
 def test_reads_all_messages(fixture_db):
     reader = EnvelopeReader(fixture_db)

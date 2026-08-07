@@ -59,7 +59,7 @@ class MailInterface(Protocol):
         self, message_id: int, mailbox: str | None = None, account: str | None = None
     ) -> dict[str, str]: ...
     def message_key(self, message_id: int, source_folder: str, account: str) -> str: ...
-    def send_mail(self, to_address: str, subject: str, body: str) -> None: ...
+    def send_mail(self, to_address: str, subject: str, body: str) -> str: ...
 
 
 def _escape_applescript_string(value: str) -> str:
@@ -340,6 +340,13 @@ class AppleScriptMail:
         worse failure mode than leaving a draft behind. ``delete`` applies to
         the outgoing message — the compose object — not to anything in a
         mailbox.
+
+        The account is resolved by matching the outgoing message's ``sender``
+        against each account's ``email addresses``. Mail has no "default
+        account" property worth reading, and the account is needed because
+        the bounce comes back to *its* inbox. Read before ``delete``, which
+        discards the compose object. An unmatched sender yields "", which the
+        caller reports rather than guessing at.
         """
         return (
             'tell application "Mail"\n'
@@ -351,17 +358,32 @@ class AppleScriptMail:
             f'{{address:"{_escape_applescript_string(to_address)}"}}\n'
             "  end tell\n"
             "  send newMessage\n"
+            "  set senderValue to sender of newMessage as string\n"
+            '  set accountName to ""\n'
+            "  repeat with acct in accounts\n"
+            "    repeat with addr in email addresses of acct\n"
+            "      if senderValue contains (addr as string) then\n"
+            "        set accountName to name of acct as string\n"
+            "        exit repeat\n"
+            "      end if\n"
+            "    end repeat\n"
+            '    if accountName is not "" then exit repeat\n'
+            "  end repeat\n"
             "  delete newMessage\n"
+            "  return accountName\n"
             "end tell"
         )
 
-    def send_mail(self, to_address: str, subject: str, body: str) -> None:
-        """Send a message from Mail's default account.
+    def send_mail(self, to_address: str, subject: str, body: str) -> str:
+        """Send a message from Mail's default account; return that account's name.
 
         The only method in mail-triage that sends anything. Callers must have
         an explicit per-message confirmation in hand before calling it.
+
+        Returns "" if the sending account could not be identified, which the
+        caller reports honestly rather than substituting a guess.
         """
-        _run(self._send_script(to_address, subject, body))
+        return _run(self._send_script(to_address, subject, body)).strip()
 
 
 def _parse_headers(raw: str) -> dict[str, str]:
@@ -402,6 +424,7 @@ class FakeMail:
         folders: dict[str, list[int]] | None = None,
         keys: dict[int, str] | None = None,
         accounts: dict[str, dict[str, list[int]]] | None = None,
+        sending_account: str = "iCloud",
     ) -> None:
         self._mailboxes = list(mailboxes)
         self._headers = headers or {}
@@ -431,6 +454,10 @@ class FakeMail:
         # key-based lookup in ``move_message`` resolve one to the other in
         # practice — via whichever numeric id currently holds a given key.
         self._keys = dict(keys or {})
+        # Which account send_mail reports having sent from. Mail's default
+        # account is not necessarily one this tool triages, and the bounce
+        # check depends on knowing which it was.
+        self._sending_account = sending_account
         self.moved: list[tuple[int, str, str, str]] = []
         self.sent: list[tuple[str, str]] = []
         self.header_reads: list[tuple[int, str | None, str | None]] = []
@@ -516,7 +543,8 @@ class FakeMail:
         self.header_reads.append((message_id, mailbox, account))
         return dict(self._headers.get(message_id, {}))
 
-    def send_mail(self, to_address: str, subject: str, body: str) -> None:
+    def send_mail(self, to_address: str, subject: str, body: str) -> str:
         # Body deliberately not recorded: what matters to a test is that
         # exactly one message went to exactly one address.
         self.sent.append((to_address, subject))
+        return self._sending_account
