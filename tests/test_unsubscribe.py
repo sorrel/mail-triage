@@ -7,6 +7,7 @@ import pytest
 from mail_triage.config import Config, Source
 from mail_triage.envelope import EnvelopeReader
 from mail_triage.mail_app import FakeMail
+from mail_triage.sends import SentRequest
 from mail_triage.unsubscribe import (
     UnsubscribeOption,
     find_candidates,
@@ -630,3 +631,39 @@ def test_the_table_marks_which_senders_cannot_be_sent_to():
 
     table = render_candidates([option("a@x.example", method="http")])
     assert "browser" in table.casefold() or "yourself" in table.casefold()
+
+
+def test_send_unsubscribe_returns_a_record_of_what_went_out():
+    option = UnsubscribeOption(
+        sender="news@list.example",
+        domain="list.example",
+        method="mailto",
+        target="leave@list.example",
+        message_count=1,
+        unread_count=1,
+        subject="token-abc12345",
+        body="unsubscribe",
+    )
+    mail = FakeMail(inbox=[], mailboxes=[], sending_account="iCloud")
+    record = send_unsubscribe(option, mail, now=1_700_000_000)
+    assert record == SentRequest(
+        sender="news@list.example",
+        to_address="leave@list.example",
+        subject="token-abc12345",
+        sent_at=1_700_000_000,
+        from_account="iCloud",
+    )
+
+
+def test_refusing_to_send_records_nothing():
+    """A request that never went out must not appear in the log."""
+    option = UnsubscribeOption(
+        sender="news@list.example",
+        domain="list.example",
+        method="http",
+        target="https://list.example/unsub",
+        message_count=1,
+        unread_count=1,
+    )
+    with pytest.raises(ValueError):
+        send_unsubscribe(option, FakeMail(inbox=[], mailboxes=[]))

@@ -43,6 +43,7 @@ from mail_triage.deletion import SECONDS_PER_DAY, build_deletion_index
 from mail_triage.envelope import MessageRow
 from mail_triage.folders import folder_path
 from mail_triage.mail_app import MailError, MailInterface
+from mail_triage.sends import SentRequest
 
 _TARGET = re.compile(r"<([^>]+)>")
 
@@ -162,7 +163,8 @@ def tally_senders(messages: list[MessageRow]) -> dict[str, tuple[int, int]]:
     return {sender: (counts[0], counts[1]) for sender, counts in totals.items()}
 
 
-def _folder_url(reader, source: Source, folder: str) -> str | None:
+def folder_url(reader, source: Source, folder: str) -> str | None:
+    """The mailbox URL for one of a source's folders, or None if absent."""
     for url in reader.mailbox_urls():
         if url.startswith(source.prefix) and folder_path(url).casefold() == folder.casefold():
             return url
@@ -207,7 +209,7 @@ def find_candidates(
     # what lets the ranking decide who is worth a round trip.
     provisional: list[tuple[UnsubscribeOption, _Exemplar]] = []
     for source in config.sources:
-        inbox_url = _folder_url(reader, source, source.inbox)
+        inbox_url = folder_url(reader, source, source.inbox)
         messages = list(reader.inbox_messages(inbox_url)) if inbox_url else []
         deletions = build_deletion_index(reader, config, source, now=now)
 
@@ -221,7 +223,7 @@ def find_candidates(
                 normalise_sender(message.sender),
                 _Exemplar(message.rowid, source.inbox, source.name),
             )
-        trash_url = _folder_url(reader, source, source.trash)
+        trash_url = folder_url(reader, source, source.trash)
         if trash_url:
             for message in reader.messages_in_mailbox(trash_url):
                 if not message.date_sent or message.date_sent < cutoff:
@@ -355,12 +357,26 @@ def render_candidates(options: list[UnsubscribeOption]) -> str:
     return "\n".join(lines)
 
 
-def send_unsubscribe(option: UnsubscribeOption, mail: MailInterface) -> None:
-    """Send the unsubscribe request. Only mailto targets are supported."""
+def send_unsubscribe(
+    option: UnsubscribeOption, mail: MailInterface, now: int | None = None
+) -> SentRequest:
+    """Send the unsubscribe request, and describe what went out.
+
+    Only mailto targets are supported. The returned record is what the bounce
+    check matches against later; it is returned rather than written here so
+    that this function stays the one that sends and nothing else.
+    """
     if option.method != "mailto":
         raise ValueError(
             f"Cannot send to a {option.method} target; only mailto unsubscribe is supported."
         )
     if not _VALID_ADDRESS.match(option.target):
         raise ValueError(f"Refusing to send: {option.target!r} is not an email address.")
-    mail.send_mail(option.target, option.subject, option.body)
+    from_account = mail.send_mail(option.target, option.subject, option.body)
+    return SentRequest(
+        sender=option.sender,
+        to_address=option.target,
+        subject=option.subject,
+        sent_at=int(time.time()) if now is None else now,
+        from_account=from_account,
+    )
