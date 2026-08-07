@@ -37,6 +37,7 @@ looks convincingly like a bug). Writes go through `osascript`.
 | Module | Responsibility |
 |---|---|
 | `envelope.py` | Snapshot and read the mail database |
+| `inputs.py` | One snapshot's worth of everything a triage run reads |
 | `folders.py` | Parse mailbox URLs; normalise folder names |
 | `corpus.py` | Filing history into recency-weighted training examples |
 | `model/sender.py` | Stage A: sender and domain → folder |
@@ -48,6 +49,7 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `corrections.py` | Folders typed over a proposal, weighted 10× in training |
 | `asking.py` | Choosing and asking about uncertain senders |
 | `review.py` | Proposal table and the confirm loops |
+| `layout.py` | Terminal column arithmetic shared by every table |
 | `execute.py` | The only module that moves mail |
 | `deletion.py` | Deletion as negative evidence, counted per account |
 | `unsubscribe.py` | Rank lists worth leaving; send the request (the only sender) |
