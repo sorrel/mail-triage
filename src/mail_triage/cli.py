@@ -9,16 +9,14 @@ from pathlib import Path
 import click
 
 from mail_triage.accounts import account_names, resolve_account_name, truncate_name
-from mail_triage.asking import (
-    ask_all, build_ranking_inputs, rank_uncertain,
-)
+from mail_triage.asking import ask_all, rank_uncertain
 from mail_triage.cli_help import ColouredGroup
 from mail_triage.config import load_config
 from mail_triage.corrections import load_corrections, record_overrides
-from mail_triage.deletion import PerAccountDeletionIndex, build_deletion_index
 from mail_triage.envelope import DEFAULT_DB_PATH, EnvelopeReader, MessageRow, snapshot_database
 from mail_triage.execute import execute
-from mail_triage.folders import account_prefix, folder_path, match_folders
+from mail_triage.folders import account_prefix, match_folders
+from mail_triage.inputs import InputError, gather
 from mail_triage.journal import Journal, list_runs, new_run_id, undo_run
 from mail_triage.mail_app import AppleScriptMail, MailError, MailNotRunningError
 from mail_triage.model.classify import Classifier
@@ -226,6 +224,26 @@ def learn(drift: bool) -> None:
                 click.echo(f"  ... and {len(entries) - DRIFT_REPORT_LIMIT} more")
 
 
+def _select_sources(config, source_names: tuple[str, ...]):
+    """The sources to triage, narrowed by any --source given.
+
+    An unknown name is refused rather than ignored: silently triaging every
+    source when the user asked for one is the sort of surprise that moves
+    mail they were not looking at.
+    """
+    sources = list(config.sources)
+    if not source_names:
+        return sources
+    known = {source.name: source for source in sources}
+    missing = [name for name in source_names if name not in known]
+    if missing:
+        raise click.ClickException(
+            f"No source named {', '.join(repr(n) for n in missing)}. "
+            f"Configured sources: {', '.join(sorted(known))}."
+        )
+    return [known[name] for name in source_names]
+
+
 def _make_header_guard(mail):
     """Build the do-not-file guard hook (Task 11B) around a mail interface.
 
@@ -391,16 +409,7 @@ def triage(
         # in an unattended run there is nobody there to have it.
         ask = False
     config = load_config()
-    sources = list(config.sources)
-    if source_names:
-        known = {source.name: source for source in sources}
-        missing = [name for name in source_names if name not in known]
-        if missing:
-            raise click.ClickException(
-                f"No source named {', '.join(repr(n) for n in missing)}. "
-                f"Configured sources: {', '.join(sorted(known))}."
-            )
-        sources = [known[name] for name in source_names]
+    sources = _select_sources(config, source_names)
     model = load_model(config.model_path)
     # Loaded before anything else: an unreadable rules file must stop the run,
     # not be silently ignored, or mail gets filed contrary to instructions.
@@ -408,77 +417,21 @@ def triage(
         rules = load_rules(config.rules_path)
     except RulesError as error:
         raise click.ClickException(str(error)) from error
-    # The folder list comes from the database, not AppleScript: it preserves
-    # full nested paths ("Parent/Child") and real capitalisation, both of
-    # which AppleScript's flat leaf-name list would lose.
-    with tempfile.TemporaryDirectory() as work:
-        snapshot = snapshot_database(DEFAULT_DB_PATH, Path(work))
-        reader = EnvelopeReader(snapshot)
-        try:
-            mailbox_urls = reader.mailbox_urls()
-            messages = []
-            indices: dict[str, dict] = {}
-            source_folders: dict[str, set[str]] = {}
-            for source in sources:
-                inbox_url = next(
-                    (
-                        url for url in mailbox_urls
-                        if url.startswith(source.prefix)
-                        and folder_path(url).casefold() == source.inbox.casefold()
-                    ),
-                    None,
-                )
-                if inbox_url is None:
-                    raise click.ClickException(
-                        f"No mailbox '{source.inbox}' under {source.prefix} for source "
-                        f"'{source.name}'. Run 'mail-triage accounts' to check the prefix."
-                    )
-                # inbox_messages, not messages_in_mailbox: a Gmail inbox is a
-                # label, so filtering on the mailbox URL alone finds nothing.
-                messages.extend(reader.inbox_messages(inbox_url))
-                # Task 11C: built from this same open reader/snapshot, not a
-                # second one — filing and deletion counts must come from
-                # identical data or the same-window guarantee is meaningless.
-                # One index per account: habits differ between them.
-                indices[source.prefix] = build_deletion_index(reader, config, source)
-                # That source's own mailboxes, for the pre-flight bin check
-                # below: a bin stays in its own account, so the filing
-                # account's folder list cannot answer for it.
-                source_folders[source.prefix] = {
-                    folder_path(url).casefold()
-                    for url in mailbox_urls
-                    if url.startswith(source.prefix) and folder_path(url)
-                }
-            deletion_index = PerAccountDeletionIndex(indices)
-            # Candidate folders come from the filing account alone: there is
-            # one filing tree and every source's mail goes into it.
-            folders = [
-                folder_path(url)
-                for url in mailbox_urls
-                if url.startswith(config.filing_account_prefix) and folder_path(url)
-            ]
-            # Attachment names for the invoice guard, scoped to the inbox
-            # rather than the whole table, and read from this same snapshot.
-            attachments = reader.attachment_names(m.rowid for m in messages)
-            # Ranking basis for the questions below: how often each sender
-            # writes, not how many of their messages are in today's inbox.
-            # Senders who send bills are never offered the bin answer. Both
-            # come from a single scan of the message table.
-            yearly_counts, billing_senders = (
-                build_ranking_inputs(reader, config) if ask else ({}, set())
-            )
-        finally:
-            reader.close()
+    try:
+        inputs = gather(config, sources, ask, DEFAULT_DB_PATH)
+    except InputError as error:
+        raise click.ClickException(str(error)) from error
+    folders = inputs.folders
     mail = AppleScriptMail()
     guard, guard_state = _make_header_guard(mail)
 
     def classify_all(current_rules):
         classifier = Classifier(
             model, config, folders, guard=guard,
-            deletion_index=deletion_index, rules=current_rules,
-            attachments=attachments,
+            deletion_index=inputs.deletion_index, rules=current_rules,
+            attachments=inputs.attachments,
         )
-        return [classifier.classify(message) for message in messages]
+        return [classifier.classify(message) for message in inputs.messages]
 
     proposals = classify_all(rules)
     if guard_state["fetches"]:
@@ -486,8 +439,8 @@ def triage(
 
     if ask:
         proposals = _ask_about_uncertain_senders(
-            proposals, model, folders, yearly_counts, config, rules, classify_all,
-            billing_senders,
+            proposals, model, folders, inputs.yearly_counts, config, rules, classify_all,
+            inputs.billing_senders,
         )
 
     click.echo(render_table(proposals, {s.prefix: s.name for s in sources}))
@@ -521,7 +474,7 @@ def triage(
             f"\nFiling {len(decisions)} message{'s' if len(decisions) != 1 else ''} "
             f"at {config.auto_threshold:g} confidence or above, unprompted."
         )
-        _act_on(decisions, sources, source_folders, config, mail)
+        _act_on(decisions, sources, inputs.source_folders, config, mail)
         return
 
     decisions = review(
@@ -543,7 +496,7 @@ def triage(
     decisions += review_unplaced(
         proposals, lambda text: click.prompt(text, default="k", show_default=False)
     )
-    _act_on(decisions, sources, source_folders, config, mail)
+    _act_on(decisions, sources, inputs.source_folders, config, mail)
 
 
 def _act_on(decisions, sources, source_folders, config, mail) -> None:
