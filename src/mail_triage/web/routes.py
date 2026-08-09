@@ -22,15 +22,16 @@ from __future__ import annotations
 import json
 import mimetypes
 import threading
+import time
 from pathlib import Path
 
 from mail_triage.config import Config
 from mail_triage.corrections import record_overrides
 from mail_triage.execute import execute
 from mail_triage.journal import Journal, new_run_id, undo_run
-from mail_triage.mail_app import MailInterface
+from mail_triage.mail_app import MailError, MailInterface
 from mail_triage.review import Decision
-from mail_triage.sends import new_batch_id, record_send
+from mail_triage.sends import FailedRequest, new_batch_id, record_failure, record_send
 from mail_triage.unsubscribe import send_unsubscribe
 from mail_triage.web.payloads import candidates_payload, outcome_payload, proposals_payload
 from mail_triage.web.security import (
@@ -213,7 +214,27 @@ class Router:
             )
         if self._batch_id is None:
             self._batch_id = new_batch_id()
-        record = send_unsubscribe(option, self.mail)
+        try:
+            record = send_unsubscribe(option, self.mail)
+        except (ValueError, MailError) as error:
+            # Uncaught, this killed the connection: the browser's fetch
+            # rejected, the page could only say "failed", and the reason
+            # existed nowhere but a traceback in the terminal. Written down
+            # and handed back instead — as a failure record, never as a send,
+            # so the bounce check cannot mistake it for a request that left.
+            record_failure(
+                self.config,
+                self._batch_id,
+                FailedRequest(
+                    sender=option.sender,
+                    to_address=option.target,
+                    subject=option.subject,
+                    attempted_at=int(time.time()),
+                    from_account=option.account,
+                    reason=str(error),
+                ),
+            )
+            return Response.json({"error": str(error)}, status=502)
         record_send(self.config, self._batch_id, record)
         # Deliberately not "unsubscribed": a send that reports success is not
         # a request that landed. 'mail-triage unsubscribe --check' reads this

@@ -33,7 +33,7 @@ def make_config(tmp_path, **overrides):
 
 
 def option(sender, *, messages=10, unread=9, deleted=0, method="mailto",
-           subject="unsubscribe"):
+           subject="unsubscribe", account="iCloud"):
     domain = sender.split("@", 1)[1]
     return UnsubscribeOption(
         sender=sender,
@@ -44,6 +44,7 @@ def option(sender, *, messages=10, unread=9, deleted=0, method="mailto",
         unread_count=unread,
         deleted_count=deleted,
         subject=subject,
+        account=account,
     )
 
 
@@ -457,6 +458,27 @@ def test_sending_uses_the_mail_bridge():
     assert mail.sent == [("leave@x.example", "unsubscribe")]
 
 
+def test_the_request_is_sent_from_the_account_that_received_the_mail():
+    """Measured on a live mailbox, 9 August 2026. The request went out from
+    Mail's default account — the first in its list, a Yahoo account that is
+    not even a configured source — whilst the subscription was on iCloud.
+    Yahoo's server would not send it, so three attempts left three drafts and
+    nothing reached the list. A request from an address that never subscribed
+    identifies nobody even when it does send."""
+    mail = FakeMail(inbox=[], mailboxes=[])
+    send_unsubscribe(option("a@x.example", account="iCloud"), mail)
+    assert mail.sent_from == ["iCloud"]
+
+
+def test_a_request_is_never_sent_from_an_account_we_cannot_name():
+    """Falling back to Mail's default is exactly what sent the live one from
+    the wrong address. Not sending is the better failure: it is visible."""
+    mail = FakeMail(inbox=[], mailboxes=[])
+    with pytest.raises(ValueError, match="which account"):
+        send_unsubscribe(option("a@x.example", account=""), mail)
+    assert mail.sent == []
+
+
 def test_sending_uses_the_subject_the_sender_asked_for():
     """The provider matches on it; the wrong subject is a rejected request."""
     mail = FakeMail(inbox=[], mailboxes=[])
@@ -524,7 +546,7 @@ def test_the_outgoing_message_is_deleted_after_sending():
     """Otherwise Mail's autosave writes it to Drafts (seen live, 6 Aug 2026)."""
     from mail_triage.mail_app import AppleScriptMail
 
-    script = AppleScriptMail()._send_script("leave@x.example", "unsubscribe", "unsubscribe")
+    script = AppleScriptMail()._send_script("leave@x.example", "unsubscribe", "unsubscribe", "iCloud")
 
     assert "delete newMessage" in script
     # Order matters absolutely: deleting first would send nothing at all.
@@ -535,7 +557,7 @@ def test_send_mail_escapes_its_arguments():
     """A quote in a sender-supplied address must not break out of the script."""
     from mail_triage.mail_app import AppleScriptMail
 
-    script = AppleScriptMail()._send_script('a"b@x.example', 'un"subscribe', "body")
+    script = AppleScriptMail()._send_script('a"b@x.example', 'un"subscribe', "body", 'iC"loud')
 
     assert '\\"' in script
     assert 'a"b@x.example' not in script
@@ -643,6 +665,7 @@ def test_send_unsubscribe_returns_a_record_of_what_went_out():
         unread_count=1,
         subject="token-abc12345",
         body="unsubscribe",
+        account="iCloud",
     )
     mail = FakeMail(inbox=[], mailboxes=[], sending_account="iCloud")
     record = send_unsubscribe(option, mail, now=1_700_000_000)

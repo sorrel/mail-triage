@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import sqlite3
 import tempfile
+import time
 from pathlib import Path
 
 import click
@@ -34,10 +35,12 @@ from mail_triage.never_personal import (
 from mail_triage.never_personal import forget_never_personal as forget_never_personal_sender
 from mail_triage.rules import RulesError, forget_rule, load_rules
 from mail_triage.sends import (
+    FailedRequest,
     SentRequest,
     list_batches,
     load_batch,
     new_batch_id,
+    record_failure,
     record_send,
 )
 from mail_triage.size_report import (
@@ -871,6 +874,20 @@ def unsubscribe(dry_run: bool, check: bool, limit: int, sender: str | None) -> N
             request = send_unsubscribe(option, mail)
         except (ValueError, MailError) as error:
             click.echo(click.style(f"  {option.sender}: not sent — {error}", fg="red"))
+            # Printed *and* written down. Scrollback is not a log, and the
+            # one failure that mattered was found by noticing stray drafts.
+            record_failure(
+                config,
+                batch_id,
+                FailedRequest(
+                    sender=option.sender,
+                    to_address=option.target,
+                    subject=option.subject,
+                    attempted_at=int(time.time()),
+                    from_account=option.account,
+                    reason=str(error),
+                ),
+            )
             failed += 1
             continue
         # Recorded only now, after the send returned. A record written first

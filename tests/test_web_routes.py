@@ -6,8 +6,9 @@ import json
 
 from mail_triage.config import Config
 from mail_triage.envelope import MessageRow
-from mail_triage.mail_app import FakeMail
+from mail_triage.mail_app import FakeMail, MailError
 from mail_triage.model.classify import Proposal
+from mail_triage.sends import load_batch, load_failures
 from mail_triage.unsubscribe import UnsubscribeOption
 from mail_triage.web.routes import Router
 from mail_triage.web.security import Request
@@ -236,6 +237,41 @@ def test_sending_an_unsubscribe_uses_the_mailto_path_with_the_senders_token(tmp_
     assert response.status == 200
     assert json.loads(response.body)["sent"] is True
     assert mail.sent == [("leave@shop.example", "unsub/CgxnVLz")]
+
+
+class RefusingMail(FakeMail):
+    """Mail declining to send, as it did on 9 August 2026 when handed a
+    message composed from an account with no server it could send through."""
+
+    def send_mail(self, to_address, subject, body, from_account):
+        raise MailError("Mail got an error: the message could not be sent")
+
+
+def test_a_send_that_fails_says_why_instead_of_dropping_the_connection(tmp_path):
+    """The MailError used to escape the router entirely: the handler died, the
+    browser's fetch rejected, and the page could only say "failed". The reason
+    existed nowhere but a traceback in the terminal."""
+    router, _ = build(tmp_path, mail=RefusingMail(inbox=[], mailboxes=[]))
+    router.unsubscribe_source = lambda: [option()]
+    response = router.handle(api(
+        "/api/unsubscribe/send", method="POST", payload={"sender": "news@shop.example"},
+    ))
+    assert response.status == 502
+    assert "could not be sent" in json.loads(response.body)["error"]
+
+
+def test_a_failed_send_is_written_down_where_it_can_be_reviewed(tmp_path):
+    router, _ = build(tmp_path, mail=RefusingMail(inbox=[], mailboxes=[]))
+    router.unsubscribe_source = lambda: [option()]
+    router.handle(api(
+        "/api/unsubscribe/send", method="POST", payload={"sender": "news@shop.example"},
+    ))
+    failures = load_failures(router.config, router._batch_id)
+    assert [failure.sender for failure in failures] == ["news@shop.example"]
+    assert "could not be sent" in failures[0].reason
+    # And never as a send: the bounce check must not see a request that
+    # never left.
+    assert load_batch(router.config, router._batch_id) == []
 
 
 def test_an_http_target_is_never_sent_by_the_server(tmp_path):
