@@ -503,9 +503,19 @@ def test_two_run_ids_in_the_same_second_are_still_different():
 
 
 def test_a_run_id_still_sorts_by_time():
-    """list_runs orders lexicographically to find the most recent."""
+    """list_runs orders lexicographically to find the most recent, so the
+    timestamp must lead and the suffix must not disturb that.
+
+    Asserted on the *shape* and on two fabricated ids rather than against a
+    hardcoded moment: comparing a freshly generated id with a fixed string
+    passes or fails according to the time of day the suite happens to run,
+    which is how this first went green locally and red in CI.
+    """
+    import re
+
     from mail_triage.journal import new_run_id
 
-    first = new_run_id()
-    assert sorted([first, "2026-08-09T14-31-07-aaaa"])[0] == "2026-08-09T14-31-07-aaaa"
-    assert first.startswith("20")
+    earlier = "2026-08-09T14-31-07-ffff"
+    later = "2026-08-09T14-31-08-0000"
+    assert sorted([later, earlier]) == [earlier, later]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[0-9a-f]{4}", new_run_id())
