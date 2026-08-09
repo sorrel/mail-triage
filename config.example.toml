@@ -63,6 +63,13 @@ prefix = "imap://BBBBBBBB"
 inbox  = "INBOX"
 trash  = "[Gmail]/Bin"
 ignore = ["[[]Gmail]*"]
+# Gmail only, and Gmail needs it. Because the inbox is a label, filing into
+# another account copies the message and leaves the label in place: the mail
+# is filed *and* still in the inbox, so the next run files it again and a
+# second copy lands. Moving the leftover here is Gmail's own word for
+# archiving, which is what clears the label. Without this, mail-triage
+# reports such a move as failed rather than pretending it worked.
+archive = "[Gmail]/All Mail"
 
 # An Exchange/Outlook account. The scheme is ews:// rather than imap://,
 # which needs no special handling. Its bin is "Deleted Items" and its junk

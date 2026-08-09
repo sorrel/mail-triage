@@ -60,6 +60,11 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `sizes.py` | Measure disk and envelope size per mailbox |
 | `size_report.py` | Render the size grids |
 | `mail_app.py` | AppleScript bridge, plus `FakeMail` for tests |
+| `web/security.py` | Host, token and origin checks for the local server |
+| `web/routes.py` | Pure request → response over one run's proposals |
+| `web/server.py` | The loopback socket, and the interface's lifetime |
+| `web/session.py` | A run's proposals under opaque ids |
+| `web/payloads.py` | What the browser is told, and what it is not |
 
 ### Several accounts
 
@@ -167,6 +172,33 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   header names on one message concluded "no signal available"; dumping every
   header across all 14 messages found `Feedback-Id` and then disproved it. The
   second run is what made the difference, and it cost one AppleScript loop.
+- **A move that reports success is not a message that left the inbox.**
+  A Gmail inbox is a label, so a cross-account move copies the message to the
+  filing account and leaves the label untouched. Mail returns happily, the
+  journal records "moved", and the message is still in the inbox to be filed
+  again next run — with a fresh copy landing each time. Measured on 9 August
+  2026: four attempts on one newsletter, three copies in the destination, the
+  original in the Gmail inbox throughout. `execute` now verifies with
+  `message_exists` after every move, clears the label by moving the leftover
+  to the source's `archive` (`[Gmail]/All Mail`), verifies again, and reports
+  a failure when it cannot. Note the shape — it is the same defect as the
+  unsubscribe that reported "sent" and bounced: the success was reported by
+  the thing that wanted to succeed, and nobody asked the mailbox.
+- **Binding to 127.0.0.1 does not stop a web page from reaching the server.**
+  DNS rebinding resolves an attacker's hostname to 127.0.0.1, and their page is
+  then same-origin with ours. The strict `Host` check in `web/security.py` is
+  what actually closes that, and a per-run token in a *header* — which no
+  cross-origin page can read out of our HTML — closes CSRF without depending
+  on cookie `SameSite` rules. Neither is optional; they answer different
+  attacks.
+- **`Feedback-Id` does not mean bulk.** See above — the same measurement
+  discipline applies to the browser interface: `frame-src https:` in the CSP
+  covers the iframe, but an anchor `href` is covered by no policy at all, so
+  an unsubscribe target is checked to be `https` in `web/payloads.py` *and*
+  again in `app.js`.
+- **`<dialog>` closes on Escape without firing your close button.** Reset the
+  unsubscribe iframe on the dialog's own `close` event, or the sender's page
+  goes on running invisibly for as long as the tab is open.
 - **In TOML, every top-level key must precede the first `[[source]]` table.**
   Anything after one is parsed as part of it. This broke the first draft of
   `config.example.toml`; `load_config` now says so by name when it happens.

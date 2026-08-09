@@ -225,3 +225,65 @@ def test_flagged_overrides_everything_even_a_bulk_sender():
     )
     assert isinstance(veto, Veto)
     assert "flagged" in veto.reason
+
+
+def test_a_no_reply_word_is_matched_as_a_whole_component():
+    """A mail provider's DMARC reports come from "noreply-dmarc-support@".
+
+    The patterns were once anchored to the "@", which quietly required the
+    word to be the entire local part. So a machine-generated aggregate
+    report was held back as possibly personal, run after run — and the bin
+    rule on the sender could never fire, because a guard outranks a rule.
+    """
+    assert is_bulk("noreply-dmarc-support@google.example", None) is True
+    assert is_bulk("noreply-dmarc-support@google.example", {"Subject": "hi"}) is True
+
+
+def test_a_no_reply_word_matches_wherever_the_component_sits():
+    assert is_bulk("github-noreply@service.example", None) is True
+    assert is_bulk("do-not-reply-alerts@service.example", None) is True
+    assert is_bulk("alerts.notifications.team@service.example", None) is True
+
+
+def test_a_word_that_merely_starts_with_no_reply_is_still_not_bulk():
+    """"noreplyneeded" is one component, not the word. Preserved from the
+    @-anchored behaviour deliberately — this is the case that keeps the
+    looser matching from swallowing real addresses."""
+    assert is_bulk("noreplyneeded@work.example", None) is False
+    assert is_bulk("noreplyneeded@work.example", {"Subject": "hi"}) is False
+
+
+def test_the_previous_no_reply_forms_all_still_match():
+    for sender in (
+        "noreply@shop.example",
+        "no-reply@shop.example",
+        "do_not_reply@email.apple.example",
+        "do.not.reply@service.example",
+        "notifications@service.example",
+        "bounce@service.example",
+    ):
+        assert is_bulk(sender, None) is True, sender
+
+
+def test_real_correspondents_are_untouched_by_the_component_matching():
+    """Names are not made of these words, so the run test cannot fire."""
+    for sender in (
+        "elizabeth.warrington@work.example",
+        "christopher-mccarthy@work.example",
+        "j.r.hartley@work.example",
+        "accounts.receivable@supplier.example",
+    ):
+        assert is_bulk(sender, None) is False, sender
+
+
+def test_the_cost_of_component_matching_is_recorded_rather_than_hidden():
+    """A person whose address *is* one of these words as a component reads as
+    bulk, and their mail could be filed away.
+
+    "bounce.hannah@" is the shape: nobody is likely to have it, but it is the
+    price of catching "noreply-dmarc-support@", and it should be written down
+    rather than discovered. If a real correspondent ever collides, the answer
+    is a rule, not a looser guard — a rule cannot save them (guards outrank
+    rules), so the answer is actually to narrow _NO_REPLY_WORDS.
+    """
+    assert is_bulk("bounce.hannah@work.example", None) is True

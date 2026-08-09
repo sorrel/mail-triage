@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="triage-token" content="__TOKEN__">
+<title>Triage</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/fuzzy.js" defer></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+
+<header class="masthead">
+  <h1>Triage</h1>
+  <p class="tally" id="tally">Reading your inbox…</p>
+  <nav class="actions">
+    <button type="button" id="open-lists">Mailing lists</button>
+    <button type="button" id="undo" hidden>Undo</button>
+    <button type="button" class="primary" id="apply" title="Apply (⌘ Return)">
+      Apply <kbd>⌘↵</kbd>
+    </button>
+  </nav>
+</header>
+
+<p class="alert" id="alert" hidden role="alert"></p>
+
+<main id="proposals" aria-live="polite"></main>
+
+<p class="legend">
+  <kbd>↑</kbd><kbd>↓</kbd> or <kbd>j</kbd><kbd>k</kbd> move ·
+  <kbd>←</kbd><kbd>→</kbd> along a message’s controls ·
+  <kbd>f</kbd> folder · <kbd>b</kbd> bin · <kbd>s</kbd> skip ·
+  <kbd>⌘↵</kbd> apply
+</p>
+
+<dialog id="confirm" class="narrow">
+  <h2>Are you sure?</h2>
+  <p class="note" id="confirm-question"></p>
+  <menu>
+    <button type="button" id="confirm-no" autofocus>Leave it <kbd>L</kbd></button>
+    <button type="button" id="confirm-yes" class="primary">File it <kbd>F</kbd></button>
+  </menu>
+  <p class="note dialog-legend">
+    <kbd>←</kbd><kbd>→</kbd> choose · <kbd>↵</kbd> confirm · <kbd>esc</kbd> leave it
+  </p>
+</dialog>
+
+<dialog id="lists">
+  <header>
+    <h2>Lists worth leaving</h2>
+    <button type="button" class="close" data-close="lists" aria-label="Close">&times;</button>
+  </header>
+  <p class="note">Ranked by what you bin without reading.</p>
+  <ol id="candidates"></ol>
+</dialog>
+
+<dialog id="frame" class="wide">
+  <header>
+    <h2 id="frame-title"></h2>
+    <a id="frame-tab" target="_blank" rel="noopener noreferrer">Open in a tab &#8599;</a>
+    <button type="button" class="close" data-close="frame" aria-label="Close">&times;</button>
+  </header>
+  <p class="note">
+    This page comes from the sender and runs sandboxed — no cookies, no storage,
+    and it cannot see anything else here. It is still their code, and loading it
+    tells them the address is live. Some providers refuse to be framed at all;
+    open it in a tab if nothing appears.
+  </p>
+  <iframe id="frame-view" sandbox="allow-scripts allow-forms"
+          referrerpolicy="no-referrer" title="The sender's unsubscribe page"></iframe>
+</dialog>
+
+</body>
+</html>

@@ -1,0 +1,412 @@
+/* Quiet editorial.
+ *
+ * The data is foremost and the chrome recedes. A system serif carries the
+ * mail's own words and the tool's reasoning; the system sans carries labels
+ * and controls, so the machine's voice is visually distinct from the mail's.
+ * Colour is signal, never decoration, and no state is told by colour alone.
+ *
+ * No web fonts by design: they would be an external request the CSP forbids,
+ * and the faces already on a Mac are good.
+ */
+
+:root {
+  --paper: #faf8f5;
+  --ink: #1c1a17;
+  --ink-soft: #6b635a;
+  --rule: #e4ded4;
+  --file: #2f5d50;
+  --bin: #7d3232;
+  /* Darkened from #8a6d1f: this carries the veto reason in italic serif at
+   * 0.875rem, the hardest text here to read and the most worth reading. */
+  --held: #7a5e14;
+  --tint: rgba(47, 93, 80, 0.06);
+  --measure: 78ch;
+  --serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #171512;
+    --ink: #ece7df;
+    --ink-soft: #9a9187;
+    --rule: #322e28;
+    --file: #7fbfa9;
+    --bin: #d98b8b;
+    --held: #d8b45e;
+    --tint: rgba(127, 191, 169, 0.08);
+  }
+}
+
+* { box-sizing: border-box; }
+html { color-scheme: light dark; }
+
+body {
+  margin: 0;
+  padding: 0 2rem 6rem;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- masthead ----------------------------------------------------------- */
+
+.masthead {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 3.5rem 0 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.masthead h1 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 1.5rem;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+.tally { color: var(--ink-soft); font-size: 0.8125rem; margin: 0; }
+.actions { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; }
+
+button {
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.4rem 0.9rem;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+button:hover { border-color: var(--ink-soft); }
+button.primary { border-color: var(--file); color: var(--file); }
+button[disabled] { opacity: 0.5; cursor: default; }
+
+button:focus-visible,
+a:focus-visible,
+.row:focus-visible { outline: 2px solid var(--file); outline-offset: 2px; }
+
+.alert {
+  max-width: var(--measure);
+  margin: 1.25rem auto 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--bin);
+  border-radius: 2px;
+  color: var(--bin);
+  font-size: 0.875rem;
+}
+
+/* --- the list ----------------------------------------------------------- */
+
+main { max-width: var(--measure); margin: 0 auto; }
+
+.account {
+  font-size: 0.6875rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin: 2.75rem 0 0.25rem;
+}
+
+/* Two columns and three explicit children, rather than cells appended in
+ * order: positional grid filling drifts the moment a row gains or loses a
+ * line, which is exactly what a vetoed row does. */
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 2rem;
+  padding: 1.15rem 0.75rem;
+  margin: 0 -0.75rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.row[data-chosen] { background: var(--tint); }
+.body { min-width: 0; }
+
+.sender { font-size: 0.8125rem; color: var(--ink-soft); }
+
+.subject {
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  font-weight: 400;
+  line-height: 1.35;
+  margin: 0.15rem 0 0.3rem;
+}
+
+.destination { font-size: 0.8125rem; color: var(--file); }
+.destination[data-action="bin"] { color: var(--bin); }
+
+.destination.unplaced { color: var(--ink-soft); font-style: italic; }
+
+.destination.overridden {
+  color: var(--ink-soft);
+  text-decoration: line-through;
+}
+
+.reason,
+.veto {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 0.875rem;
+  margin-top: 0.15rem;
+}
+
+.reason { color: var(--ink-soft); }
+.veto { color: var(--held); }
+
+.metrics { text-align: right; white-space: nowrap; }
+.confidence { font-size: 0.8125rem; color: var(--ink-soft); }
+
+.meter {
+  display: block;
+  width: 4rem;
+  height: 1px;
+  background: var(--rule);
+  margin: 0.4rem 0 0 auto;
+}
+
+.meter > span { display: block; height: 1px; background: var(--file); }
+.meter[data-held] > span { background: var(--rule); }
+
+/* The word, not just the tint: file and bin must not look alike. */
+.state {
+  display: block;
+  margin-top: 0.6rem;
+  font-size: 0.6875rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.state[data-action="file"] { color: var(--file); }
+.state[data-action="bin"] { color: var(--bin); }
+.state[data-action="skip"] { color: var(--ink-soft); }
+
+.row-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+  opacity: 0;
+}
+
+.row:hover .row-actions,
+.row:focus .row-actions,
+.row:focus-within .row-actions { opacity: 1; }
+
+/* A row with a choice made keeps its controls visible — hiding them again
+ * makes the page look like it forgot. */
+.row[data-chosen] .row-actions { opacity: 1; }
+
+/* --- the folder box ------------------------------------------------------ */
+
+.picker { position: relative; display: inline-block; }
+
+.folder-input {
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.4rem 0.6rem;
+  width: 20rem;
+  max-width: 60vw;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+}
+
+.folder-input::placeholder { color: var(--ink-soft); }
+.folder-input:focus-visible { outline: 2px solid var(--file); outline-offset: 2px; }
+
+.matches {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 2px);
+  left: 0;
+  width: 24rem;
+  max-width: 80vw;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.12);
+}
+
+.match {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.match[data-active] { background: var(--tint); color: var(--file); }
+
+/* --- applying, made visible ---------------------------------------------- */
+
+.row[data-acting] { background: var(--tint); }
+
+/* Filed mail leaves slowly and visibly: it fades, drifts, and the gap it
+ * left closes up. Fast enough not to be a wait, slow enough to be watched —
+ * the point is to see which messages went. */
+.row[data-leaving] {
+  opacity: 0;
+  transform: translateX(2rem);
+  overflow: hidden;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom-color: transparent;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .row[data-leaving] {
+    transition:
+      opacity 520ms ease,
+      transform 520ms ease,
+      height 420ms ease 120ms,
+      padding 420ms ease 120ms;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No drift and no waiting, but the outcome still shows before it goes. */
+  .row[data-leaving] { transform: none; }
+}
+
+kbd {
+  font: inherit;
+  font-size: 0.6875rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  color: var(--ink-soft);
+}
+
+button kbd { margin-left: 0.35rem; border-color: currentColor; color: inherit; }
+
+/* The shortcuts, said once, quietly, where they can be found without being
+ * in the way. */
+.legend {
+  max-width: var(--measure);
+  margin: 2.5rem auto 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--rule);
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  line-height: 2;
+}
+
+.empty {
+  font-family: var(--serif);
+  font-style: italic;
+  color: var(--ink-soft);
+  padding: 4rem 0;
+}
+
+/* --- dialogs ------------------------------------------------------------ */
+
+dialog {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  max-width: 46rem;
+  width: 92vw;
+  padding: 0;
+}
+
+dialog.wide {
+  max-width: 64rem;
+  height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+dialog::backdrop { background: rgb(0 0 0 / 0.35); }
+
+/* The override confirmation. Deliberately plain and deliberately in the way:
+ * declining is the default and has focus, so a stray Return leaves the mail
+ * where it is. */
+dialog.narrow { max-width: 26rem; }
+dialog.narrow h2 { margin: 1.25rem 1.25rem 0; }
+.dialog-legend {
+  margin: 0 1.25rem 1.1rem;
+  text-align: right;
+  font-size: 0.6875rem;
+}
+
+dialog.narrow menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.5rem 1.25rem 1.25rem;
+  list-style: none;
+}
+
+dialog header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+dialog h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+dialog header .close { margin-left: auto; }
+
+.note {
+  font-size: 0.8125rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  margin: 0.85rem 1.25rem;
+}
+
+/* Sender pages assume a light ground, so this one stays white in dark mode
+ * rather than looking broken. */
+#frame-view {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  background: #fff;
+}
+
+#candidates { list-style: none; margin: 0; padding: 0.25rem 1.25rem 1.25rem; }
+
+#candidates li {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+#candidates li:last-child { border-bottom: 0; }
+
+.who { font-size: 0.9375rem; }
+.counts { font-size: 0.8125rem; color: var(--ink-soft); margin-left: auto; }
+a { color: var(--file); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .row,
+  button,
+  .row-actions { transition: background-color 120ms ease, opacity 120ms ease; }
+}

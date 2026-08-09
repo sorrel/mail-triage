@@ -119,7 +119,55 @@ def execute(
             journal.record(entry)
             failed += 1
             continue
+        if not _left_the_inbox(entry, mail, source):
+            entry.status = "failed"
+            journal.record(entry)
+            failed += 1
+            continue
         entry.status = "moved"
         journal.record(entry)
         moved += 1
     return moved, failed
+
+
+def _left_the_inbox(entry: JournalEntry, mail: MailInterface, source) -> bool:
+    """Whether the message really is gone from the inbox it came from.
+
+    **A move that reports success is not a message that left the inbox.** A
+    Gmail inbox is a label rather than a mailbox, so a cross-account move
+    copies the message to the filing account and leaves the label untouched:
+    Mail returns happily, the journal says "moved", and the message is still
+    sitting in the inbox to be filed again next run. Measured on a live
+    mailbox on 9 August 2026 — four attempts on one newsletter left three
+    copies in the destination and the original in the Gmail inbox throughout.
+
+    So it is checked rather than believed, and where the source names an
+    ``archive`` the label is cleared by moving the leftover there — Gmail's
+    own word for what removes an inbox label. The check is repeated
+    afterwards, because an archive step that fails silently would put us back
+    exactly where we started.
+
+    Failing to verify counts as *not* left: an unproven move is reported as a
+    failure, never as a success.
+    """
+    if not entry.message_key:
+        return True
+    try:
+        if not mail.message_exists(entry.message_key, source.inbox, source.name):
+            return True
+    except MailError:
+        return False
+    if not source.archive:
+        return False
+    try:
+        mail.move_message(
+            0,
+            source.archive,
+            source.name,
+            source_folder=source.inbox,
+            message_key=entry.message_key,
+            source_account=source.name,
+        )
+        return not mail.message_exists(entry.message_key, source.inbox, source.name)
+    except MailError:
+        return False

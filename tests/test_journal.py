@@ -90,8 +90,16 @@ def test_repeated_marks_keep_only_the_latest_status_on_load(tmp_path):
 
 
 def test_run_ids_are_unique_and_sortable():
+    """Unique, and ordered by time to the second.
+
+    Two ids from the same second no longer compare in creation order — the
+    random suffix that makes them unique is what breaks the tie, arbitrarily.
+    That is the intended trade: ordering *within* one second was never
+    meaningful, whereas two runs sharing a journal file corrupted both.
+    """
     first, second = new_run_id(), new_run_id()
-    assert first <= second
+    assert first != second
+    assert first[:19] <= second[:19]
 
 
 def test_list_runs_returns_newest_first(tmp_path):
@@ -478,3 +486,36 @@ def test_undo_of_a_single_account_move_is_unchanged(tmp_path):
     reversed_count, failed = undo_run("run-1", config, mail, account="iCloud")
     assert (reversed_count, failed) == (1, 0)
     assert mail.inbox_message_ids("iCloud") == [1]
+
+
+def test_two_run_ids_in_the_same_second_are_still_different():
+    """Second resolution alone is not uniqueness.
+
+    Two runs starting in the same second shared a journal file, and because
+    load() folds repeated entries for a message down to the last one written,
+    one run's 'failed' overwrote the other's 'moved'. Undo then skipped
+    messages that really had moved — observed on 9 August 2026.
+    """
+    from mail_triage.journal import new_run_id
+
+    ids = {new_run_id() for _ in range(50)}
+    assert len(ids) == 50
+
+
+def test_a_run_id_still_sorts_by_time():
+    """list_runs orders lexicographically to find the most recent, so the
+    timestamp must lead and the suffix must not disturb that.
+
+    Asserted on the *shape* and on two fabricated ids rather than against a
+    hardcoded moment: comparing a freshly generated id with a fixed string
+    passes or fails according to the time of day the suite happens to run,
+    which is how this first went green locally and red in CI.
+    """
+    import re
+
+    from mail_triage.journal import new_run_id
+
+    earlier = "2026-08-09T14-31-07-ffff"
+    later = "2026-08-09T14-31-08-0000"
+    assert sorted([later, earlier]) == [earlier, later]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[0-9a-f]{4}", new_run_id())

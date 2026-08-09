@@ -59,6 +59,7 @@ class MailInterface(Protocol):
         self, message_id: int, mailbox: str | None = None, account: str | None = None
     ) -> dict[str, str]: ...
     def message_key(self, message_id: int, source_folder: str, account: str) -> str: ...
+    def message_exists(self, message_key: str, folder: str, account: str) -> bool: ...
     def send_mail(self, to_address: str, subject: str, body: str) -> str: ...
 
 
@@ -201,7 +202,10 @@ class AppleScriptMail:
         # addressed with ``source_account``, which defaults to the target and
         # thereby leaves every within-account move exactly as it was. Note that
         # a cross-account move is a copy-and-delete over IMAP rather than a
-        # relabelling: the message leaves the source account.
+        # relabelling. That holds for ordinary IMAP and Exchange, and it is
+        # *false for Gmail*, where the inbox is a label: the copy lands and
+        # the label stays, so the message never leaves the inbox whilst the
+        # move reports success. execute.py verifies rather than believing it.
         folder_escaped = _escape_applescript_string(folder)
         account_escaped = _escape_applescript_string(account)
         source_account_escaped = _escape_applescript_string(source_account or account)
@@ -241,6 +245,36 @@ class AppleScriptMail:
             "  move theMessage to theBox\n"
             "end tell"
         )
+
+    def message_exists(self, message_key: str, folder: str, account: str) -> bool:
+        """Whether a message with this RFC-822 key is still in that mailbox.
+
+        The question ``execute`` must ask after every move, because a move
+        that reports success is not a message that left the inbox. A Gmail
+        inbox is a label rather than a mailbox: a cross-account move copies
+        the message and leaves the label in place, so Mail returns happily
+        whilst the original sits exactly where it was. Measured on a live
+        mailbox, 9 August 2026 — three attempts produced three copies in the
+        destination and left the original in the Gmail inbox every time.
+        """
+        key_escaped = _escape_applescript_string(message_key)
+        folder_escaped = _escape_applescript_string(folder)
+        account_escaped = _escape_applescript_string(account)
+        script = (
+            'tell application "Mail"\n'
+            f'  set matches to (messages of mailbox "{folder_escaped}" '
+            f'of account "{account_escaped}" whose message id is "{key_escaped}")\n'
+            "  return (count of matches)\n"
+            "end tell"
+        )
+        try:
+            return int(_run(script) or 0) > 0
+        except MailNotRunningError:
+            raise
+        except (MailError, ValueError):
+            # Cannot tell. Reported as still present, so the caller fails safe
+            # and says the move is unproven rather than claiming success.
+            return True
 
     def move_message(
         self,
@@ -425,6 +459,7 @@ class FakeMail:
         keys: dict[int, str] | None = None,
         accounts: dict[str, dict[str, list[int]]] | None = None,
         sending_account: str = "iCloud",
+        leaves_original: bool = False,
     ) -> None:
         self._mailboxes = list(mailboxes)
         self._headers = headers or {}
@@ -447,6 +482,9 @@ class FakeMail:
         # is handed. Anything else would strand a moved message under the
         # account it was moved to, where the legacy readers cannot see it.
         self._per_account = bool(accounts)
+        # Simulates the Gmail case: a move that copies and leaves the
+        # original where it was. See move_message.
+        self.leaves_original = leaves_original
         # Numeric id -> durable RFC-822 message_key, mirroring the real bridge:
         # the numeric id is whatever database row currently holds the message,
         # the key travels with the message across moves. Kept per numeric id
@@ -530,9 +568,21 @@ class FakeMail:
             message_id = matches[0]
         elif message_id not in source_contents:
             raise MessageNotFoundError(f"Message {message_id} not in '{source_folder}'")
-        source_contents.remove(message_id)
+        # A Gmail inbox is a label, not a mailbox, and a cross-account move
+        # out of one copies the message without clearing the label — so the
+        # original stays put whilst the move reports success. Measured on a
+        # live mailbox, 9 August 2026: three attempts, three copies in the
+        # destination, and the message still in the Gmail inbox each time.
+        if not self.leaves_original:
+            source_contents.remove(message_id)
         self._contents(account, folder).append(message_id)
         self.moved.append((message_id, folder, account, source_folder))
+
+    def message_exists(self, message_key: str, folder: str, account: str) -> bool:
+        return any(
+            self._keys.get(mid) == message_key
+            for mid in self._contents(account, folder)
+        )
 
     def message_headers(
         self, message_id: int, mailbox: str | None = None, account: str | None = None

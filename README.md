@@ -137,8 +137,13 @@ running `triage --dry-run` first to see what it would do.
 | `triage --auto` | File everything at or above `auto_threshold` without asking |
 | `triage --no-ask` | Skip the sender questions |
 | `triage --source NAME` | Triage only that source. Repeatable |
+| `web` | Triage in a browser, on 127.0.0.1 only |
+| `web --no-open` | Print the URL instead of launching a browser |
+| `web --port N` | Listen on another port (still loopback) |
 | `rules` | List the answers you have given about senders |
 | `rules --forget <sender>` | Remove one sender's rule |
+| `rules --never-personal <sender>` | Vouch that a sender never awaits a reply |
+| `rules --forget-never-personal <sender>` | Withdraw that |
 | `explain <sender>` | Show why that sender's mail goes where it does |
 | `unsubscribe` | List lists worth leaving; unsubscribe from the ones you pick |
 | `unsubscribe --dry-run` | List the candidates; send nothing |
@@ -147,6 +152,41 @@ running `triage --dry-run` first to see what it would do.
 | `unsubscribe --check` | Report bounces for the last batch instead of sending |
 | `runs` | List runs that can be undone |
 | `undo [run-id]` | Reverse a run, defaulting to the most recent |
+
+### In a browser
+
+`mail-triage web` runs the same triage pass and serves it to a page you can
+click through, with the reasoning shown beside every message.
+
+```
+$ mail-triage web
+Serving 15 messages on http://127.0.0.1:8765
+Opening your browser…   (ctrl-C to stop)
+```
+
+It binds `127.0.0.1` and nothing else, so it is reachable only from this
+machine. The URL carries a token that works **once**: the page trades it for
+a header token and drops it from the address bar, so the URL left in your
+scrollback is worthless afterwards. The server stops on Ctrl-C, or after
+thirty minutes with no request — it can move mail, and should not still be
+listening tomorrow morning.
+
+Nothing moves until you press Apply, and what moves is journalled and
+undoable exactly as a terminal run is. Mail a guard held back cannot be filed
+from the browser at all; the guards are enforced on the server, not in the
+page.
+
+`j`/`k` move, `f` files, `b` bins, `s` skips, `⌘⏎` applies.
+
+**The unsubscribe panel** ranks lists by what you bin without reading. A
+`mailto` list is left by sending the request, as the terminal does. An
+`https` one opens the sender's own page in a sandboxed frame — no cookies, no
+storage, and it cannot see anything else on the page. It is still their code,
+and loading it tells them your address is live. Plenty of providers refuse to
+be framed at all, so there is an "open in a tab" link beside it.
+
+mail-triage itself still makes no outbound HTTP request of any kind: the
+frame is your browser's request, made on your click.
 
 ## Getting less mail
 
