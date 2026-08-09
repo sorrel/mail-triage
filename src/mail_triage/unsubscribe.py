@@ -357,8 +357,52 @@ def render_candidates(options: list[UnsubscribeOption]) -> str:
     return "\n".join(lines)
 
 
+# How long a queued message may sit in the Outbox before we stop calling it
+# sent. Polled每 second rather than slept through, so the ordinary send —
+# which clears in well under a second — costs nothing.
+OUTBOX_TIMEOUT_SECONDS = 20
+
+
+def _left_the_outbox(
+    mail: MailInterface, option: UnsubscribeOption, sleep, timeout: int
+) -> None:
+    """Wait for the queued message to go, or raise saying it has not.
+
+    **Mail's ``send`` returns once the message is queued, not once it has
+    gone.** On 9 August 2026 three requests sat in the Outbox being rejected
+    on every retry — "Cannot send message using the server iCloud… From
+    address is not one of your addresses" — whilst the tool had reported all
+    three sent and moved on. The same shape as the move that reported success
+    and the label that came back: the component that wanted to succeed was
+    the only one asked.
+
+    Polled rather than slept blindly. A flat wait would cost every send the
+    worst case, and the worst case is the rare one.
+
+    A message still queued at the timeout may yet go — Mail retries. It is
+    reported as not sent anyway, because the alternative is recording a
+    success we cannot demonstrate. The cost of that choice is a request that
+    later goes out with no entry in the send log, so a bounce for it would
+    not be matched; the failure log says so, and that is the better way round.
+    """
+    waited = 0
+    while mail.outbox_contains(option.target, option.subject):
+        if waited >= timeout:
+            raise MailError(
+                f"Still in the Outbox after {timeout}s, so it has not been sent. "
+                "Mail usually reports the reason in a dialogue of its own — most "
+                "often the sending account's server refusing the From address."
+            )
+        sleep(1)
+        waited += 1
+
+
 def send_unsubscribe(
-    option: UnsubscribeOption, mail: MailInterface, now: int | None = None
+    option: UnsubscribeOption,
+    mail: MailInterface,
+    now: int | None = None,
+    sleep=time.sleep,
+    timeout: int = OUTBOX_TIMEOUT_SECONDS,
 ) -> SentRequest:
     """Send the unsubscribe request, and describe what went out.
 
@@ -386,6 +430,7 @@ def send_unsubscribe(
     from_account = mail.send_mail(
         option.target, option.subject, option.body, option.account
     )
+    _left_the_outbox(mail, option, sleep, timeout)
     return SentRequest(
         sender=option.sender,
         to_address=option.target,

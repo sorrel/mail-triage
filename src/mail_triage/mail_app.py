@@ -63,6 +63,7 @@ class MailInterface(Protocol):
     def send_mail(
         self, to_address: str, subject: str, body: str, from_account: str
     ) -> str: ...
+    def outbox_contains(self, to_address: str, subject: str) -> bool: ...
 
 
 def _escape_applescript_string(value: str) -> str:
@@ -450,6 +451,40 @@ class AppleScriptMail:
         """
         return _run(self._send_script(to_address, subject, body, from_account)).strip()
 
+    def outbox_contains(self, to_address: str, subject: str) -> bool:
+        """Whether a message with this subject and recipient is still queued.
+
+        Mail's ``send`` returns once the message is queued, so the Outbox is
+        the only place that knows whether it actually went. Matched on subject
+        *and* recipient because the subject alone is often the bare word
+        "unsubscribe" — the default for a target carrying no token — which
+        would match any other queued request.
+
+        A failure to ask counts as still queued: an unproven send is never
+        reported as a success.
+        """
+        subject_escaped = _escape_applescript_string(subject)
+        address_escaped = _escape_applescript_string(to_address)
+        script = (
+            'tell application "Mail"\n'
+            "  set queued to 0\n"
+            "  repeat with m in messages of outbox\n"
+            f'    if subject of m is "{subject_escaped}" then\n'
+            "      repeat with r in to recipients of m\n"
+            f'        if address of r is "{address_escaped}" then set queued to queued + 1\n'
+            "      end repeat\n"
+            "    end if\n"
+            "  end repeat\n"
+            "  return queued\n"
+            "end tell"
+        )
+        try:
+            return int(_run(script) or 0) > 0
+        except MailNotRunningError:
+            raise
+        except (MailError, ValueError):
+            return True
+
 
 def _parse_headers(raw: str) -> dict[str, str]:
     """Parse RFC-822 headers, joining folded continuation lines.
@@ -623,6 +658,10 @@ class FakeMail:
             self._keys.get(mid) == message_key
             for mid in self._contents(account, folder)
         )
+
+    def outbox_contains(self, to_address: str, subject: str) -> bool:
+        """Nothing queues by default. Tests that care subclass this."""
+        return False
 
     def message_headers(
         self, message_id: int, mailbox: str | None = None, account: str | None = None

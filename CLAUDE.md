@@ -205,6 +205,18 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   `@me.com` alias), which is right for a target carrying a subscriber token
   in its address and a guess for a bare `unsubscribe@` one; and the address a
   newsletter was actually delivered to is recorded nowhere we can consult.
+- **Mail's `send` returns when the message is queued, not when it has gone.**
+  The three wrong-account requests above did not vanish: they sat in the
+  Outbox and were retried, each retry raising "Cannot send message using the
+  server iCloud — the sender address …@yahoo.com was rejected … From address
+  is not one of your addresses". The tool had already reported all three
+  sent. `send_unsubscribe` now polls `outbox_contains` (subject *and*
+  recipient — the subject is often the bare word "unsubscribe") once a second
+  for 20s, so the ordinary send costs nothing and a stuck one is reported as
+  a failure. Note the deliberate asymmetry: a message still queued at the
+  timeout may yet go, and is called failed anyway, which can leave a real
+  send with no entry in the log for a bounce to match. That is the better way
+  round — the reverse is claiming a success we cannot demonstrate.
 - **A failed send left no trace anywhere.** `record_send` runs only after
   success — deliberately, see `sends.py`, because a pre-send record would let
   the bounce check report "no bounce, therefore fine" for a request that never

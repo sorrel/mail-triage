@@ -6,7 +6,7 @@ import pytest
 
 from mail_triage.config import Config, Source
 from mail_triage.envelope import EnvelopeReader
-from mail_triage.mail_app import FakeMail
+from mail_triage.mail_app import FakeMail, MailError
 from mail_triage.sends import SentRequest
 from mail_triage.unsubscribe import (
     UnsubscribeOption,
@@ -690,3 +690,57 @@ def test_refusing_to_send_records_nothing():
     )
     with pytest.raises(ValueError):
         send_unsubscribe(option, FakeMail(inbox=[], mailboxes=[]))
+
+
+# --- a send that reports success is not a request that left ----------------
+#
+# Mail's `send` returns once the message is *queued*. On 9 August 2026 three
+# requests sat in the Outbox being rejected on every retry — "Cannot send
+# message using the server iCloud... From address is not one of your
+# addresses" — whilst the tool had already reported them sent.
+
+
+class StuckMail(FakeMail):
+    """Mail that queues the message and never gets rid of it."""
+
+    def outbox_contains(self, to_address: str, subject: str) -> bool:
+        return True
+
+
+class SlowMail(FakeMail):
+    """Queued, then away on the third look — the ordinary case."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.looks = 0
+
+    def outbox_contains(self, to_address: str, subject: str) -> bool:
+        self.looks += 1
+        return self.looks < 3
+
+
+def test_a_request_still_in_the_outbox_is_not_reported_as_sent():
+    mail = StuckMail(inbox=[], mailboxes=[])
+    waits: list[float] = []
+    with pytest.raises(MailError, match="Outbox"):
+        send_unsubscribe(option("a@x.example"), mail, sleep=waits.append, timeout=20)
+    # Polled rather than slept blindly, and gave up at the timeout.
+    assert 0 < len(waits) <= 20
+
+
+def test_waiting_stops_the_moment_the_message_goes():
+    """A normal send must not cost twenty seconds."""
+    mail = SlowMail(inbox=[], mailboxes=[])
+    waits: list[float] = []
+    record = send_unsubscribe(
+        option("a@x.example"), mail, now=1_700_000_000, sleep=waits.append, timeout=20
+    )
+    assert record.to_address == "leave@x.example"
+    assert len(waits) == 2
+
+
+def test_a_message_that_never_reaches_the_outbox_needs_no_wait_at_all():
+    mail = FakeMail(inbox=[], mailboxes=[])
+    waits: list[float] = []
+    send_unsubscribe(option("a@x.example"), mail, sleep=waits.append, timeout=20)
+    assert waits == []
