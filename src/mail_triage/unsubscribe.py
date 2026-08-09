@@ -372,7 +372,20 @@ def send_unsubscribe(
         )
     if not _VALID_ADDRESS.match(option.target):
         raise ValueError(f"Refusing to send: {option.target!r} is not an email address.")
-    from_account = mail.send_mail(option.target, option.subject, option.body)
+    if not option.account:
+        # Never fall back to Mail's own default. On 9 August 2026 that default
+        # was the first account in its list — a Yahoo account that is not a
+        # configured source — whilst the subscription was on iCloud. The send
+        # failed and left drafts; had it worked, the request would have come
+        # from an address the list has never heard of, which identifies
+        # nobody. Not sending is the better failure, because it is visible.
+        raise ValueError(
+            f"Refusing to send: no record of which account received {option.sender}'s mail, "
+            "and a request from the wrong address identifies nobody."
+        )
+    from_account = mail.send_mail(
+        option.target, option.subject, option.body, option.account
+    )
     return SentRequest(
         sender=option.sender,
         to_address=option.target,

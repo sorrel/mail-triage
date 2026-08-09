@@ -190,6 +190,30 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   from the inbox. `FakeMail` models that boundary rather than leaving the
   original on every move; a fake that did the latter could only ever test
   the failure path, which is how the success path went uncovered at first.
+- **An outgoing message with no `sender` is composed from Mail's first
+  account, which has nothing to do with the list being left.** On 9 August
+  2026 an unsubscribe for a subscription on iCloud was composed from a Yahoo
+  account — first in Mail's list, and not even a configured source. Yahoo
+  would not send it, so three attempts left three drafts and nothing reached
+  the list; had it sent, the request would have come from an address that
+  never subscribed, which identifies nobody. `UnsubscribeOption.account` had
+  recorded the right account all along and `send_unsubscribe` simply never
+  passed it on. `send_mail` now takes `from_account` with no default and
+  refuses rather than falling back — a wrong-address send is invisible,
+  whereas not sending is not. Two limits worth knowing: where an account has
+  several addresses the *primary* is used (this Mac's iCloud primary is an
+  `@me.com` alias), which is right for a target carrying a subscriber token
+  in its address and a guess for a bare `unsubscribe@` one; and the address a
+  newsletter was actually delivered to is recorded nowhere we can consult.
+- **A failed send left no trace anywhere.** `record_send` runs only after
+  success — deliberately, see `sends.py`, because a pre-send record would let
+  the bounce check report "no bounce, therefore fine" for a request that never
+  went out. But the web route had no `except` at all, so the `MailError`
+  escaped through `Router.handle` into the HTTP handler, killed the
+  connection, and the page could only say "failed". The reason existed solely
+  as a traceback in a terminal. Failures now go to `unsubscribe-failures/`, a
+  sibling directory the bounce check never reads — the fix is to record them
+  *apart from* the sends, not to relax the rule about the sends.
 - **Asking Mail to confirm what Mail just told you is the same claim twice.**
   The fix above verified a cross-account move with `message_exists`, and
   cleared the Gmail label only when that reading said the message was still

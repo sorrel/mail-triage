@@ -413,7 +413,7 @@ def test_fake_mail_without_accounts_behaves_as_before():
 
 def test_send_script_asks_which_account_it_sent_from():
     """The bounce comes back to the sending account, so we must know it."""
-    script = AppleScriptMail()._send_script("leave@list.example", "token", "unsubscribe")
+    script = AppleScriptMail()._send_script("leave@list.example", "token", "unsubscribe", "iCloud")
     assert "send newMessage" in script
     assert "email addresses of acct" in script
     # The account must be read before the compose object is discarded.
@@ -422,4 +422,4 @@ def test_send_script_asks_which_account_it_sent_from():
 
 def test_fake_mail_reports_its_sending_account():
     mail = FakeMail(inbox=[], mailboxes=[], sending_account="Gmail")
-    assert mail.send_mail("leave@list.example", "token", "unsubscribe") == "Gmail"
+    assert mail.send_mail("leave@list.example", "token", "unsubscribe", "") == "Gmail"

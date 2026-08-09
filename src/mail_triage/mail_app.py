@@ -60,7 +60,9 @@ class MailInterface(Protocol):
     ) -> dict[str, str]: ...
     def message_key(self, message_id: int, source_folder: str, account: str) -> str: ...
     def message_exists(self, message_key: str, folder: str, account: str) -> bool: ...
-    def send_mail(self, to_address: str, subject: str, body: str) -> str: ...
+    def send_mail(
+        self, to_address: str, subject: str, body: str, from_account: str
+    ) -> str: ...
 
 
 def _escape_applescript_string(value: str) -> str:
@@ -353,7 +355,9 @@ class AppleScriptMail:
         )
         return _run(script)
 
-    def _send_script(self, to_address: str, subject: str, body: str) -> str:
+    def _send_script(
+        self, to_address: str, subject: str, body: str, from_account: str
+    ) -> str:
         """The AppleScript for one outgoing message.
 
         Every argument is escaped, unlike elsewhere in this module where the
@@ -381,11 +385,29 @@ class AppleScriptMail:
         the bounce comes back to *its* inbox. Read before ``delete``, which
         discards the compose object. An unmatched sender yields "", which the
         caller reports rather than guessing at.
+
+        **The sender is set explicitly, before anything is composed.** The
+        account is looked up first and the script errors if it does not exist
+        or has no address, so a name that cannot be resolved sends nothing at
+        all — rather than falling through to Mail's own default, which is
+        simply the first account in its list and has no relationship to the
+        list being left. Where an account has several addresses the first is
+        its primary, and that is the one used; the address a given newsletter
+        was delivered to is not recorded anywhere we could consult.
         """
+        account_escaped = _escape_applescript_string(from_account)
         return (
             'tell application "Mail"\n'
+            f'  set wanted to (every account whose name is "{account_escaped}")\n'
+            "  if wanted is {} then error "
+            f'"No account named {account_escaped}" number -1728\n'
+            "  set fromAddresses to email addresses of item 1 of wanted\n"
+            "  if fromAddresses is missing value or (count of fromAddresses) is 0 then error "
+            f'"Account {account_escaped} has no address to send from" number -1728\n'
+            "  set fromAddress to item 1 of fromAddresses as string\n"
             "  set newMessage to make new outgoing message with properties "
-            f'{{subject:"{_escape_applescript_string(subject)}", '
+            "{sender:fromAddress, "
+            f'subject:"{_escape_applescript_string(subject)}", '
             f'content:"{_escape_applescript_string(body)}", visible:false}}\n'
             "  tell newMessage\n"
             "    make new to recipient at end of to recipients with properties "
@@ -408,16 +430,25 @@ class AppleScriptMail:
             "end tell"
         )
 
-    def send_mail(self, to_address: str, subject: str, body: str) -> str:
-        """Send a message from Mail's default account; return that account's name.
+    def send_mail(self, to_address: str, subject: str, body: str, from_account: str) -> str:
+        """Send from ``from_account``'s own address; return the account's name.
 
         The only method in mail-triage that sends anything. Callers must have
         an explicit per-message confirmation in hand before calling it.
 
-        Returns "" if the sending account could not be identified, which the
-        caller reports honestly rather than substituting a guess.
+        ``from_account`` is not optional and there is no default. Letting Mail
+        choose is what broke the live send on 9 August 2026: with no ``sender``
+        set, Mail composed from the first account in its list — a Yahoo account
+        that is not a configured source — whilst the subscription being left
+        was on iCloud. Yahoo's server would not send it, so three attempts
+        produced three drafts and nothing reached the list. Had it sent, the
+        request would have come from an address that never subscribed, which
+        identifies nobody.
+
+        Returns "" if the account could not be matched back from the sender,
+        which the caller reports honestly rather than substituting a guess.
         """
-        return _run(self._send_script(to_address, subject, body)).strip()
+        return _run(self._send_script(to_address, subject, body, from_account)).strip()
 
 
 def _parse_headers(raw: str) -> dict[str, str]:
@@ -498,6 +529,7 @@ class FakeMail:
         self._sending_account = sending_account
         self.moved: list[tuple[int, str, str, str]] = []
         self.sent: list[tuple[str, str]] = []
+        self.sent_from: list[str] = []
         self.header_reads: list[tuple[int, str | None, str | None]] = []
 
     def _contents(self, account: str, folder: str) -> list[int]:
@@ -601,8 +633,12 @@ class FakeMail:
         self.header_reads.append((message_id, mailbox, account))
         return dict(self._headers.get(message_id, {}))
 
-    def send_mail(self, to_address: str, subject: str, body: str) -> str:
+    def send_mail(self, to_address: str, subject: str, body: str, from_account: str) -> str:
         # Body deliberately not recorded: what matters to a test is that
-        # exactly one message went to exactly one address.
+        # exactly one message went to exactly one address. The account is
+        # recorded separately, because sending from the wrong one is the
+        # defect this parameter exists to prevent and a test must be able to
+        # see which was used, not merely that something was sent.
         self.sent.append((to_address, subject))
-        return self._sending_account
+        self.sent_from.append(from_account)
+        return from_account or self._sending_account

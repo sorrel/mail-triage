@@ -31,6 +31,9 @@ from pathlib import Path
 from mail_triage.config import Config
 
 SENDS_DIRNAME = "unsubscribe-sends"
+# A sibling directory rather than a suffix in the same one, so that
+# ``list_batches``'s glob cannot mistake a failure log for a batch.
+FAILURES_DIRNAME = "unsubscribe-failures"
 
 
 @dataclass(frozen=True)
@@ -49,8 +52,37 @@ class SentRequest:
     from_account: str
 
 
+@dataclass(frozen=True)
+class FailedRequest:
+    """One unsubscribe request that did not go out, and why.
+
+    Kept because a failure used to leave nothing at all. On 9 August 2026 a
+    request was composed from the wrong account, Mail refused to send it, and
+    the only surviving evidence was three drafts the user happened to notice
+    in a mailbox nobody had thought to look in. There was no log to review.
+
+    Deliberately *not* a ``SentRequest`` with a flag, and deliberately not in
+    the same directory. See the module docstring: anything the bounce check
+    can read must describe a request that really left, or "no bounce found"
+    starts meaning "fine" for messages that never went anywhere.
+    """
+
+    sender: str
+    to_address: str
+    subject: str
+    attempted_at: int
+    # The account it was to have been sent from — "" when the failure was
+    # precisely that we could not name one.
+    from_account: str
+    reason: str
+
+
 def sends_dir(config: Config) -> Path:
     return config.local_dir / SENDS_DIRNAME
+
+
+def failures_dir(config: Config) -> Path:
+    return config.local_dir / FAILURES_DIRNAME
 
 
 def new_batch_id() -> str:
@@ -68,6 +100,30 @@ def record_send(config: Config, batch_id: str, request: SentRequest) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     with _batch_path(config, batch_id).open("a") as handle:
         handle.write(json.dumps(asdict(request)) + "\n")
+
+
+def record_failure(config: Config, batch_id: str, failure: FailedRequest) -> None:
+    """Append one request that did not go out. Never read by the bounce check."""
+    directory = failures_dir(config)
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / f"{batch_id}.jsonl").open("a") as handle:
+        handle.write(json.dumps(asdict(failure)) + "\n")
+
+
+def load_failures(config: Config, batch_id: str) -> list[FailedRequest]:
+    """Every failure in a batch, in the order they were attempted."""
+    path = failures_dir(config) / f"{batch_id}.jsonl"
+    if not path.exists():
+        return []
+    failures: list[FailedRequest] = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            failures.append(FailedRequest(**json.loads(line)))
+        except (json.JSONDecodeError, TypeError):
+            warnings.warn(f"Skipping unreadable line in failure log {path.name}", stacklevel=2)
+    return failures
 
 
 def list_batches(config: Config) -> list[str]:
