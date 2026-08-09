@@ -344,3 +344,117 @@ def test_a_stylesheet_does_not_set_a_cookie(tmp_path):
     (tmp_path / "static" / "app.css").write_text("body { margin: 0 }")
     response = router.handle(api("/app.css"))
     assert "Set-Cookie" not in response.extra_headers
+
+
+# --- acting on held mail -----------------------------------------------------
+#
+# The precedence rules, enforced server-side. A client must not be able to
+# talk past a guard, but "no buttons at all" left the same mail sitting there
+# run after run — which is the defect review_held was added to fix in the
+# terminal.
+
+def held(kind, veto="held", folder="Filed/Orders"):
+    base = proposal()
+    return Proposal(
+        base.message, None, 0.99, "12 filings", "sender",
+        veto=veto, veto_kind=kind, held_folder=folder,
+    )
+
+
+def decide(router, identifier, action, **extra):
+    return router.handle(api(
+        "/api/decisions", method="POST",
+        payload={"decisions": [{"id": identifier, "action": action, **extra}]},
+    ))
+
+
+def test_deletion_vetoed_mail_can_be_binned_without_an_override(tmp_path):
+    """guards.py: such mail is "the prime candidate" for binning."""
+    mail = fake_mail()
+    router, session = build(
+        tmp_path, proposals=[held("deletion", "you have binned the last 8")], mail=mail
+    )
+    (identifier,) = session.entries
+    assert json.loads(decide(router, identifier, "bin").body)["moved"] == 1
+    assert mail.moved[0][1] == "Deleted Messages"
+
+
+def test_deletion_vetoed_mail_can_also_be_filed(tmp_path):
+    mail = fake_mail()
+    router, session = build(
+        tmp_path, proposals=[held("deletion", "you have binned the last 8")], mail=mail
+    )
+    (identifier,) = session.entries
+    assert json.loads(decide(router, identifier, "file").body)["moved"] == 1
+    assert mail.moved[0][1] == "Filed/Orders"
+
+
+def test_attention_held_mail_is_refused_without_an_explicit_override(tmp_path):
+    mail = fake_mail()
+    router, session = build(
+        tmp_path, proposals=[held("attention", "looks personal, may need a reply")], mail=mail
+    )
+    (identifier,) = session.entries
+    assert decide(router, identifier, "file").status == 400
+    assert not mail.moved
+
+
+def test_attention_held_mail_files_with_an_override_to_the_folder_it_would_have_used(tmp_path):
+    mail = fake_mail()
+    router, session = build(
+        tmp_path, proposals=[held("attention", "looks personal, may need a reply")], mail=mail
+    )
+    (identifier,) = session.entries
+    assert json.loads(decide(router, identifier, "file", override=True).body)["moved"] == 1
+    assert mail.moved[0][1] == "Filed/Orders"
+
+
+def test_attention_held_mail_is_never_binned_even_with_an_override(tmp_path):
+    """A message that may want a reply must not be throwable away on a click."""
+    mail = fake_mail()
+    router, session = build(
+        tmp_path, proposals=[held("attention", "looks personal, may need a reply")], mail=mail
+    )
+    (identifier,) = session.entries
+    assert decide(router, identifier, "bin", override=True).status == 400
+    assert not mail.moved
+
+
+def test_a_bill_is_never_binned_from_the_browser(tmp_path):
+    mail = fake_mail()
+    router, session = build(
+        tmp_path, proposals=[held("invoice", "the subject looks like a bill")], mail=mail
+    )
+    (identifier,) = session.entries
+    assert decide(router, identifier, "bin", override=True).status == 400
+    assert not mail.moved
+
+
+def test_a_bill_files_only_with_an_override(tmp_path):
+    mail = fake_mail()
+    router, session = build(
+        tmp_path, proposals=[held("invoice", "the subject looks like a bill")], mail=mail
+    )
+    (identifier,) = session.entries
+    assert decide(router, identifier, "file").status == 400
+    assert json.loads(decide(router, identifier, "file", override=True).body)["moved"] == 1
+
+
+def test_a_held_message_with_nowhere_to_go_is_refused_even_with_an_override(tmp_path):
+    mail = fake_mail()
+    router, session = build(
+        tmp_path,
+        proposals=[held("attention", "looks personal", folder=None)],
+        mail=mail,
+    )
+    (identifier,) = session.entries
+    assert decide(router, identifier, "file", override=True).status == 400
+    assert not mail.moved
+
+
+def test_an_invented_action_is_refused(tmp_path):
+    mail = fake_mail()
+    router, session = build(tmp_path, mail=mail)
+    (identifier,) = session.entries
+    assert decide(router, identifier, "incinerate").status == 400
+    assert not mail.moved

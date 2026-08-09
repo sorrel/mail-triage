@@ -67,6 +67,9 @@ function row(proposal) {
   const article = el("article", "row");
   article.tabIndex = 0;
   article.dataset.id = proposal.id;
+  // Read by the keyboard handler: a held message is never actioned by a
+  // keystroke, only by its button, which asks first.
+  if (proposal.veto) article.dataset.held = proposal.veto_kind || "held";
 
   const body = el("div", "body");
   body.append(el("div", "sender", proposal.sender));
@@ -80,12 +83,14 @@ function row(proposal) {
     }
     body.append(el("div", "veto", `held — ${proposal.veto}`));
   } else {
-    const destination = el(
-      "div",
-      "destination",
-      proposal.action === "delete" ? "→ the bin" : `→ ${proposal.folder}`
-    );
+    let where = `→ ${proposal.folder}`;
+    if (proposal.action === "delete") where = "→ the bin";
+    else if (!proposal.folder) where = "nowhere to file this yet";
+    const destination = el("div", "destination", where);
     if (proposal.action === "delete") destination.dataset.action = "bin";
+    if (!proposal.folder && proposal.action !== "delete") {
+      destination.classList.add("unplaced");
+    }
     body.append(destination);
     body.append(el("div", "reason", proposal.reason));
   }
@@ -104,21 +109,85 @@ function row(proposal) {
   metrics.append(state);
   article.append(metrics);
 
-  if (!proposal.veto) {
-    const actions = el("div", "row-actions");
-    for (const [label, action] of [["File", "file"], ["Bin", "bin"], ["Skip", "skip"]]) {
-      const button = el("button", null, label);
-      button.type = "button";
-      button.addEventListener("click", () => choose(proposal.id, action, article));
-      actions.append(button);
-    }
-    article.append(actions);
+  const actions = el("div", "row-actions");
+  for (const offer of offers(proposal)) {
+    const button = el("button", null, offer.label);
+    button.type = "button";
+    button.addEventListener("click", async () => {
+      if (offer.confirm && !(await confirmOverride(offer.confirm))) return;
+      choose(proposal.id, offer.action, article, offer.override);
+    });
+    actions.append(button);
   }
+  if (actions.children.length) article.append(actions);
   return article;
 }
 
-function choose(id, action, article) {
-  chosen.set(id, action);
+/* What may be done to a message, mirroring the server's own rules in
+ * routes._permitted. The server is the authority — this only decides which
+ * buttons to draw, and a client that guessed wrong is refused there. */
+function offers(proposal) {
+  if (!proposal.veto) {
+    // No folder means the classifier could not place it — too little history,
+    // or too inconsistent. Offering "File" anyway would move nothing and say
+    // nothing, which is the failure mode this project least tolerates.
+    const offered = proposal.folder ? [{ label: "File", action: "file" }] : [];
+    offered.push({ label: "Bin", action: "bin" }, { label: "Skip", action: "skip" });
+    return offered;
+  }
+  if (proposal.veto_kind === "deletion") {
+    // Binning is the obvious answer, not an override: the veto exists
+    // because this sender's recent mail is only ever binned.
+    const offered = [{ label: "Bin", action: "bin" }];
+    if (proposal.held_folder) {
+      offered.push({ label: `File → ${proposal.held_folder}`, action: "file" });
+    }
+    return offered;
+  }
+  // Attention and invoice: filing only, once, and asked about by name.
+  // Never binning — a message that may want a reply, or that looks like a
+  // bill, must not be throwable away on one click.
+  if (!proposal.held_folder) return [];
+  return [
+    {
+      label: `File anyway → ${proposal.held_folder}`,
+      action: "file",
+      override: true,
+      confirm:
+        proposal.veto_kind === "invoice"
+          ? "This looks like a bill. File it away anyway?"
+          : "This may be waiting on a reply from you. File it away anyway?",
+    },
+  ];
+}
+
+/* Buttons rather than <form method="dialog">: the page's own CSP sets
+ * form-action 'none', and a form here would be betting on how each browser
+ * scopes that directive. Escape and the backdrop resolve to "no", so every
+ * way out that is not the explicit button leaves the mail alone. */
+function confirmOverride(question) {
+  const dialog = document.getElementById("confirm");
+  document.getElementById("confirm-question").textContent = question;
+  dialog.returnValue = "no";
+  dialog.showModal();
+  return new Promise((resolve) => {
+    dialog.addEventListener(
+      "close",
+      () => resolve(dialog.returnValue === "yes"),
+      { once: true }
+    );
+  });
+}
+
+document.getElementById("confirm-no").addEventListener("click", () => {
+  document.getElementById("confirm").close("no");
+});
+document.getElementById("confirm-yes").addEventListener("click", () => {
+  document.getElementById("confirm").close("yes");
+});
+
+function choose(id, action, article, override = false) {
+  chosen.set(id, { action, override });
   article.dataset.chosen = action;
   const state = article.querySelector(".state");
   state.dataset.action = action;
@@ -158,17 +227,17 @@ async function load() {
       const note = el("p", "empty");
       note.append(
         document.createTextNode(
-          "Nothing to file. Every message below was held back deliberately — "
+          "Everything below was held back by a guard, and the reason is beside "
         )
       );
-      note.append(el("strong", null, "the reason is beside each one"));
+      note.append(el("strong", null, "each one"));
       note.append(
         document.createTextNode(
-          ". A held message cannot be filed from here; deal with it in Mail, "
+          ". Mail you keep binning can be binned from here; mail that may want a "
         )
       );
       note.append(
-        document.createTextNode("or try Mailing lists to leave what keeps arriving.")
+        document.createTextNode("reply asks first. A bill is never binned from here at all.")
       );
       main.append(note);
     }
@@ -191,7 +260,11 @@ async function load() {
 
 document.getElementById("apply").addEventListener("click", async () => {
   clearFailure();
-  const decisions = [...chosen].map(([id, action]) => ({ id, action }));
+  const decisions = [...chosen].map(([id, choice]) => ({
+    id,
+    action: choice.action,
+    override: choice.override,
+  }));
   if (decisions.length === 0) return;
   try {
     const result = await api("/api/decisions", {
@@ -309,6 +382,9 @@ document.addEventListener("keydown", (event) => {
   const index = rows.indexOf(current);
   if (event.key === "j" && index < rows.length - 1) rows[index + 1].focus();
   if (event.key === "k" && index > 0) rows[index - 1].focus();
+  // Held mail is deliberately not keyboard-actionable. Its buttons ask a
+  // question first, and a single keystroke is too cheap a way to answer one.
+  if (current && current.dataset.held) return;
   if (current && !current.querySelector(".row-actions")) return;
   if (current && "fbs".includes(event.key)) {
     choose(current.dataset.id, { f: "file", b: "bin", s: "skip" }[event.key], current);

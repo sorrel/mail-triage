@@ -105,3 +105,42 @@ def test_the_chosen_state_is_told_in_words_not_only_colour():
     source = read("app.js")
     assert '"will file"' in source
     assert '"will bin"' in source
+
+
+def test_the_page_offers_no_form_given_its_own_csp_forbids_form_action():
+    """form-action 'none' is set on every response. A <form> here would be a
+    bet on how each browser scopes that directive."""
+    assert "<form" not in read("index.html")
+
+
+def test_the_override_confirmation_defaults_to_leaving_the_mail_alone():
+    """Escape, the backdrop and the autofocused button must all mean "no"."""
+    markup = read("index.html")
+    source = read("app.js")
+    assert 'id="confirm-no" autofocus' in markup
+    assert 'dialog.returnValue = "no"' in source
+    assert 'dialog.returnValue === "yes"' in source
+
+
+def test_held_mail_is_never_actioned_by_a_keystroke():
+    """The buttons on held mail ask a question; a keystroke is too cheap a
+    way to answer one."""
+    source = read("app.js")
+    assert "if (current && current.dataset.held) return;" in source
+
+
+def test_a_bill_or_a_may_need_a_reply_is_never_offered_the_bin():
+    """Mirrors routes._permitted, which is where it is actually enforced."""
+    source = read("app.js")
+    attention_block = source.split('veto_kind === "deletion"')[1]
+    # After the deletion branch, the only action offered is filing.
+    assert 'action: "file"' in attention_block
+    assert 'action: "bin"' not in attention_block.split("return [")[-1]
+
+
+def test_file_is_not_offered_when_there_is_nowhere_to_file_to():
+    """An unplaced message has no folder, so filing it would move nothing and
+    report nothing — a silent no-op, which is the failure mode this project
+    least tolerates."""
+    source = read("app.js")
+    assert 'proposal.folder ? [{ label: "File", action: "file" }] : []' in source

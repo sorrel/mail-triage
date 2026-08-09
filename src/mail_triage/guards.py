@@ -20,6 +20,7 @@ confident that decision was.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from mail_triage.corpus import normalise_sender
@@ -27,17 +28,23 @@ from mail_triage.envelope import MessageRow
 
 # Strong enough on their own to call a sender bulk without fetching headers —
 # the whole point being to skip the AppleScript round trip for the obvious
-# cases. Matched as a substring against the lower-cased sender address, so
-# both "no-reply@shop.example" and "Shop <no-reply@shop.example>" match.
+# cases.
 #
-# Written without separators because the local part has its own stripped out
+# Written without separators because the local part is split on its own
 # before matching: senders spell the same address "no-reply@", "noreply@",
 # "do_not_reply@" and "do.not.reply@" interchangeably, and enumerating the
 # permutations means the one nobody thought of goes unmatched. An
-# underscored "do_not_reply@" was exactly that — the sender adds no
-# List-Unsubscribe either, so a bulk notification was held back as though a
-# person had written it.
-_NO_REPLY_PATTERNS = ("noreply@", "donotreply@", "notifications@", "bounce@")
+# underscored "do_not_reply@" was exactly that.
+#
+# These were once anchored to the "@" ("noreply@"), which quietly required
+# the word to be the *whole* local part. A mail provider's DMARC reports come from
+# "noreply-dmarc-support@mail-provider.example": as machine-generated as mail gets, and
+# held back run after run as possibly personal — with a bin rule on the
+# sender that could never fire, because a guard outranks a rule. Matching a
+# whole separator-delimited component instead catches that, and any other
+# "noreply-something@" or "something-noreply@", whilst still declining
+# "noreplyneeded@", where the word is not a component at all.
+_NO_REPLY_WORDS = ("noreply", "donotreply", "notifications", "bounce")
 
 # Separators stripped from the local part before matching. Only the local
 # part: a domain is not where these addresses vary, and rewriting it could
@@ -91,9 +98,33 @@ class Veto:
     reason: str
 
 
+def _local_part_components(sender: str) -> list[str]:
+    """The local part split on its separators, lower-cased.
+
+    "noreply-dmarc-support@mail-provider.example" → ["noreply", "dmarc", "support"].
+    """
+    local, at, _ = _address_of(sender).rpartition("@")
+    if not at:
+        return []
+    return [part for part in re.split(r"[-_.]", local) if part]
+
+
+def _names_a_no_reply_word(components: list[str]) -> bool:
+    """Whether any run of whole components spells a no-reply word.
+
+    A *run*, so "do-not-reply" joins to "donotreply", and a whole one, so
+    "noreplyneeded" — a single component that merely starts with the word —
+    is left alone, exactly as the ``@``-anchored patterns used to leave it.
+    """
+    for start in range(len(components)):
+        for end in range(start + 1, len(components) + 1):
+            if "".join(components[start:end]) in _NO_REPLY_WORDS:
+                return True
+    return False
+
+
 def _looks_no_reply(sender: str) -> bool:
-    normalised = _normalise_local_part(sender.casefold())
-    if any(pattern in normalised for pattern in _NO_REPLY_PATTERNS):
+    if _names_a_no_reply_word(_local_part_components(sender)):
         return True
     return _display_name_says_no_reply(sender)
 
@@ -113,16 +144,20 @@ def _display_name_says_no_reply(sender: str) -> bool:
     return any(name in squashed for name in _NO_REPLY_DISPLAY_NAMES)
 
 
-def _local_part(sender: str) -> str:
-    """The address's local part, with any display name and separators removed.
+def _address_of(sender: str) -> str:
+    """The bare address, lower-cased, with any display name dropped.
 
-    The display name is dropped first: "Shop <a1b2c3…@members.shop.example>"
-    would otherwise carry "shop <" into the local part and make every token
-    address look pronounceable.
+    Dropping it first matters: "Shop <a1b2c3…@members.shop.example>" would
+    otherwise carry "shop <" into the local part, making every token address
+    look pronounceable and every component test wrong.
     """
     _, bracket, address = sender.casefold().partition("<")
-    address = address.rstrip(">") if bracket else sender.casefold()
-    local, at, _ = address.rpartition("@")
+    return address.rstrip(">") if bracket else sender.casefold()
+
+
+def _local_part(sender: str) -> str:
+    """The address's local part, with separators removed."""
+    local, at, _ = _address_of(sender).rpartition("@")
     if not at:
         return ""
     return local.translate(_LOCAL_PART_SEPARATORS)
@@ -168,21 +203,6 @@ def _headers_say_automated(headers: dict[str, str]) -> bool:
     # RFC 3834: "no" is the explicit way of saying a human sent it, so the
     # header's presence alone must not count — that would invert its meaning.
     return auto is not None and auto.strip().casefold() != "no"
-
-
-def _normalise_local_part(sender: str) -> str:
-    """Strip separators from everything before the last ``@``.
-
-    ``rpartition`` rather than ``partition``: a display-name form like
-    "Shop <no-reply@shop.example>" has no other ``@``, but should one appear
-    in a quoted local part the address's own ``@`` is the last of them.
-    Senders with no ``@`` at all are returned unchanged rather than treated
-    as one long local part.
-    """
-    local, at, domain = sender.rpartition("@")
-    if not at:
-        return sender
-    return local.translate(_LOCAL_PART_SEPARATORS) + at + domain
 
 
 def is_bulk(sender: str, headers: dict[str, str] | None) -> bool:

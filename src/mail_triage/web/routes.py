@@ -103,19 +103,21 @@ class Router:
             proposal = self.session.get(identifier)
             if proposal is None:
                 return Response.json({"error": f"unknown message {identifier!r}"}, status=400)
-            if proposal.veto is not None:
-                # The guards decide this, not the page.
-                return Response.json(
-                    {"error": f"held back: {proposal.veto}"}, status=400
-                )
-            if self.session.is_applied(identifier) or item.get("action") == "skip":
+            action = item.get("action", "file")
+            refusal = _permitted(proposal, action, bool(item.get("override")))
+            if refusal is not None:
+                return Response.json({"error": refusal}, status=400)
+            if self.session.is_applied(identifier) or action == "skip":
                 continue
             decisions.append(
                 Decision(
                     proposal=proposal,
                     accepted=True,
-                    override_folder=item.get("folder"),
-                    action="delete" if item.get("action") == "bin" else "file",
+                    # A held message has no folder of its own — the veto reset
+                    # it — so the destination it *would* have used has to be
+                    # supplied explicitly here.
+                    override_folder=item.get("folder") or proposal.held_folder,
+                    action="delete" if action == "bin" else "file",
                 )
             )
             chosen.append(identifier)
@@ -199,6 +201,41 @@ class Router:
             headers["Set-Cookie"] = session_cookie(self.token)
         content_type, _ = mimetypes.guess_type(target.name)
         return Response(200, body, content_type or "application/octet-stream", headers)
+
+
+def _permitted(proposal, action: str, override: bool) -> str | None:
+    """Why this action on this message is refused, or ``None`` if it is allowed.
+
+    The precedence rules in one place, enforced on the server so no client
+    can talk past them. What each veto permits follows ``guards``:
+
+    - **No veto** — anything. This is ordinary mail.
+    - **A deletion veto** — file or bin freely. It means "the recent mail
+      from this sender is only ever binned", so binning is not an override
+      at all; it is the obvious answer, and ``guards`` calls such mail "the
+      prime candidate" for it.
+    - **An attention or invoice veto** — filing only, and only with an
+      explicit per-message ``override``. Never binning. A message that may
+      need a reply, or that looks like a bill, must not be throwable away on
+      one click; the terminal's ``review_held`` makes the same distinction,
+      declining by default and refusing a batch answer.
+    """
+    if action not in ("file", "bin", "skip"):
+        return f"{action!r} is not a thing that can be done to a message"
+    if proposal.veto is None or action == "skip":
+        return None
+    if proposal.veto_kind == "deletion":
+        return None
+    if action == "bin":
+        return (
+            f"this was held back — {proposal.veto} — and mail held for that "
+            "reason is never binned from here"
+        )
+    if not override:
+        return f"held back: {proposal.veto}"
+    if not (proposal.held_folder):
+        return "there is no destination to file this to"
+    return None
 
 
 def _body(request: Request) -> dict | None:
