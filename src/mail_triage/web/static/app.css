@@ -129,6 +129,13 @@ main { max-width: var(--measure); margin: 0 auto; }
   border-bottom: 1px solid var(--rule);
 }
 
+/* Which message the keys act on, marked whether focus arrived by key or by
+ * click. :focus-visible alone is the wrong test here: a row clicked with the
+ * mouse is styled by nothing, so the next keystroke appears to be ignored
+ * when in fact it went exactly where it should have. */
+.row:focus,
+.row:focus-within { box-shadow: inset 3px 0 0 var(--file); }
+
 .row[data-chosen] { background: var(--tint); }
 .body { min-width: 0; }
 
