@@ -184,6 +184,12 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   a failure when it cannot. Note the shape — it is the same defect as the
   unsubscribe that reported "sent" and bounced: the success was reported by
   the thing that wanted to succeed, and nobody asked the mailbox.
+  The boundary is *cross-account*: a move within the account does clear the
+  label, which is what makes the archive step work. Proved live on 9 August
+  2026 — INBOX -> [Gmail]/All Mail left the message in All Mail and gone
+  from the inbox. `FakeMail` models that boundary rather than leaving the
+  original on every move; a fake that did the latter could only ever test
+  the failure path, which is how the success path went uncovered at first.
 - **Binding to 127.0.0.1 does not stop a web page from reaching the server.**
   DNS rebinding resolves an attacker's hostname to 127.0.0.1, and their page is
   then same-origin with ours. The strict `Host` check in `web/security.py` is

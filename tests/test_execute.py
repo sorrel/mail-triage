@@ -65,14 +65,33 @@ def test_a_move_that_left_the_original_behind_is_reported_as_a_failure(tmp_path)
 
 
 def test_an_archive_clears_the_label_and_the_move_then_counts(tmp_path):
+    """The success path, and the reason the archive is configured at all.
+
+    The cross-account file copies and leaves the label; the archive move is
+    *within* the account, so it clears it, and the message really has left
+    the inbox. Proved against live Gmail on 9 August 2026: INBOX ->
+    [Gmail]/All Mail left the message in All Mail and gone from the inbox.
+    """
     mail = sticky_mail()
     config = gmail_config(tmp_path, archive="[Gmail]/All Mail")
     journal = Journal(config)
     journal.begin("test-run")
     moved, failed = execute([gmail_decision()], mail, journal, config)
-    # The fake leaves the original on every move, so the archive step cannot
-    # clear it either — which is exactly the case that must still fail.
-    assert (moved, failed) == (0, 1)
+    assert (moved, failed) == (1, 0)
+    assert journal.load("test-run")[-1].status == "moved"
+    # One copy in the destination, and nothing left in the inbox.
+    assert mail.folder_message_ids("Filed/News", "iCloud") == [1]
+    assert not mail.message_exists("<issue-350@list.example>", "INBOX", "Gmail")
+
+
+def test_without_an_archive_the_same_move_is_reported_as_a_failure(tmp_path):
+    """No configured way to clear the label, so the move cannot be proved —
+    and an unproven move is never reported as a success."""
+    mail = sticky_mail()
+    config = gmail_config(tmp_path, archive=None)
+    journal = Journal(config)
+    journal.begin("test-run")
+    assert execute([gmail_decision()], mail, journal, config) == (0, 1)
 
 
 def test_an_ordinary_move_is_unaffected_by_the_check(tmp_path):
