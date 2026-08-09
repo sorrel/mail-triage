@@ -1008,6 +1008,7 @@ def web(port: int, open_browser: bool, source_names: tuple[str, ...]) -> None:
         static_dir=Path(__file__).parent / "web" / "static",
         token=secrets.token_urlsafe(32),
         port=port,
+        folders=inputs.folders,
         unsubscribe_source=lambda: _unsubscribe_candidates(config, mail),
     )
 

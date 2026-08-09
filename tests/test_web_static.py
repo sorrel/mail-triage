@@ -144,3 +144,32 @@ def test_file_is_not_offered_when_there_is_nowhere_to_file_to():
     least tolerates."""
     source = read("app.js")
     assert 'proposal.folder ? [{ label: "File", action: "file" }] : []' in source
+
+
+def test_a_message_with_nowhere_to_go_gets_a_folder_picker():
+    """The live case: a bill whose predicted folder is not in the filing
+    account has no destination at all, so only the user can supply one."""
+    source = read("app.js")
+    assert "function picker(" in source
+    assert '!proposal.folder && !proposal.held_folder' in source
+    assert 'api("/api/folders")' in source
+
+
+def test_the_picker_still_asks_before_filing_a_bill():
+    """Choosing a folder must not become a way around the confirmation."""
+    source = read("app.js")
+    assert "confirmationFor(proposal)" in source
+    assert "if (question && !(await confirmOverride(question)))" in source
+
+
+def test_applying_shows_each_message_leaving():
+    source = read("app.js")
+    assert "async function showDeparture" in source
+    assert '"binning…"' in source and '"filed"' in source
+    assert "data-leaving" in read("app.css")
+
+
+def test_the_departure_animation_respects_reduced_motion():
+    source = read("app.js")
+    assert 'matchMedia("(prefers-reduced-motion: reduce)")' in source
+    assert "if (REDUCED_MOTION.matches) return Promise.resolve();" in source

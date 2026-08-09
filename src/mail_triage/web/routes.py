@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import threading
 from pathlib import Path
 
 from mail_triage.config import Config
+from mail_triage.corrections import record_overrides
 from mail_triage.execute import execute
 from mail_triage.journal import Journal, new_run_id, undo_run
 from mail_triage.mail_app import MailInterface
@@ -54,12 +56,17 @@ class Router:
         static_dir: Path,
         token: str,
         port: int,
+        folders: list[str] | None = None,
         unsubscribe_source=None,
     ) -> None:
         self.session = session
         self.config = config
         self.mail = mail
         self.accounts = accounts
+        # The filing account's real folders, in their real capitalisation.
+        # Also the allowlist: a client may only name a folder from this list,
+        # so no page can send mail to a mailbox the run never offered.
+        self.folders = sorted(folders or [])
         self.static_dir = Path(static_dir)
         self.gate = TokenGate(token)
         self.token = token
@@ -68,6 +75,8 @@ class Router:
         self.last_request = 0.0
         self._cached_candidates = None
         self._batch_id = None
+        # One Apply at a time. See _decisions.
+        self._applying = threading.Lock()
 
     # --- routing ----------------------------------------------------------
 
@@ -77,6 +86,8 @@ class Router:
             return denied
         if request.path == "/api/proposals" and request.method == "GET":
             return Response.json(proposals_payload(self.session, self.accounts))
+        if request.path == "/api/folders" and request.method == "GET":
+            return Response.json({"folders": self.folders})
         if request.path == "/api/decisions" and request.method == "POST":
             return self._decisions(request)
         if request.path == "/api/undo" and request.method == "POST":
@@ -92,6 +103,17 @@ class Router:
     # --- deciding ---------------------------------------------------------
 
     def _decisions(self, request: Request) -> Response:
+        # Serialised, because the server is threaded and two Apply requests
+        # genuinely overlapped in use: the "already applied?" check and the
+        # marking that follows it are not one operation, so both requests
+        # passed the check and both moved the same mail. The second move
+        # failed harmlessly, but it wrote 'failed' over the first's 'moved'
+        # in the journal, and undo skips a failed entry — so messages that
+        # had really moved could not be put back.
+        with self._applying:
+            return self._apply(request)
+
+    def _apply(self, request: Request) -> Response:
         payload = _body(request)
         if payload is None:
             return Response.json({"error": "body is not JSON"}, status=400)
@@ -104,7 +126,15 @@ class Router:
             if proposal is None:
                 return Response.json({"error": f"unknown message {identifier!r}"}, status=400)
             action = item.get("action", "file")
-            refusal = _permitted(proposal, action, bool(item.get("override")))
+            folder = item.get("folder") or None
+            if folder is not None and folder not in self.folders:
+                # Never trust a client with a destination. The list it was
+                # given is the only list it may name.
+                return Response.json(
+                    {"error": f"{folder!r} is not a folder in the filing account"},
+                    status=400,
+                )
+            refusal = _permitted(proposal, action, bool(item.get("override")), folder)
             if refusal is not None:
                 return Response.json({"error": refusal}, status=400)
             if self.session.is_applied(identifier) or action == "skip":
@@ -116,7 +146,7 @@ class Router:
                     # A held message has no folder of its own — the veto reset
                     # it — so the destination it *would* have used has to be
                     # supplied explicitly here.
-                    override_folder=item.get("folder") or proposal.held_folder,
+                    override_folder=folder or proposal.held_folder,
                     action="delete" if action == "bin" else "file",
                 )
             )
@@ -125,13 +155,25 @@ class Router:
         if not decisions:
             return Response.json(outcome_payload(0, 0, self.session.run_id or ""))
 
+        # Before the moves, not after: a typed folder is an instruction about
+        # where mail belongs, and it holds whether or not the move that
+        # follows happens to succeed. 'learn' weights these above plain
+        # history. Same call the terminal makes, for the same reason.
+        corrected = record_overrides(decisions, self.config)
+
         journal = Journal(self.config)
         run_id = new_run_id()
         journal.begin(run_id)
-        moved, failed = execute(decisions, self.mail, journal, self.config)
+        # Claimed before the moves, not after. If this process dies mid-batch
+        # the messages are marked as dealt with and the journal says exactly
+        # what was attempted; marking afterwards leaves a window in which the
+        # same mail can be offered — and moved — twice.
         self.session.mark_applied(chosen)
+        moved, failed = execute(decisions, self.mail, journal, self.config)
         self.session.run_id = run_id
-        return Response.json(outcome_payload(moved, failed, run_id))
+        payload = outcome_payload(moved, failed, run_id)
+        payload["corrections"] = corrected
+        return Response.json(payload)
 
     def _undo(self) -> Response:
         if not self.session.run_id:
@@ -203,7 +245,7 @@ class Router:
         return Response(200, body, content_type or "application/octet-stream", headers)
 
 
-def _permitted(proposal, action: str, override: bool) -> str | None:
+def _permitted(proposal, action: str, override: bool, folder: str | None = None) -> str | None:
     """Why this action on this message is refused, or ``None`` if it is allowed.
 
     The precedence rules in one place, enforced on the server so no client
@@ -233,8 +275,12 @@ def _permitted(proposal, action: str, override: bool) -> str | None:
         )
     if not override:
         return f"held back: {proposal.veto}"
-    if not (proposal.held_folder):
-        return "there is no destination to file this to"
+    if not (folder or proposal.held_folder):
+        # A held message often has no destination of its own — the veto reset
+        # it, or the classifier's choice was not a folder in the filing
+        # account. Then the only way to file it is to be told where, which is
+        # what the folder picker is for.
+        return "no destination — choose a folder to file this to"
     return None
 
 

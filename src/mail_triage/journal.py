@@ -21,6 +21,7 @@ Status values:
 from __future__ import annotations
 
 import json
+import secrets
 import time
 import warnings
 from dataclasses import asdict, dataclass, replace
@@ -58,8 +59,21 @@ class JournalEntry:
 
 
 def new_run_id() -> str:
-    """A run id that is both unique and lexicographically sortable by time."""
-    return time.strftime("%Y-%m-%dT%H-%M-%S", time.localtime())
+    """A run id that is both unique and lexicographically sortable by time.
+
+    The suffix is what makes the first half of that sentence true. Second
+    resolution alone does not: two runs starting in the same second shared a
+    journal file, and because ``load`` folds repeated entries for a message
+    down to the last one written, one run's ``failed`` overwrote the other's
+    ``moved``. Undo then skipped messages that really had moved.
+
+    That is not hypothetical — it happened on 9 August 2026, when a browser
+    Apply was pressed twice and two runs landed in the same second. Four
+    messages moved; the journal said two of them had failed, so undo would
+    not have put them back.
+    """
+    stamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.localtime())
+    return f"{stamp}-{secrets.token_hex(2)}"
 
 
 def _journal_path(config: Config, run_id: str) -> Path:

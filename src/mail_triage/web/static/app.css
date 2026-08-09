@@ -201,6 +201,42 @@ main { max-width: var(--measure); margin: 0 auto; }
 .row:hover .row-actions,
 .row:focus-within .row-actions { opacity: 1; }
 
+/* A row with a choice made keeps its controls visible — hiding them again
+ * makes the page look like it forgot. */
+.row[data-chosen] .row-actions { opacity: 1; }
+
+select.folders {
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.35rem 0.5rem;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  max-width: 18rem;
+}
+
+/* --- applying, made visible ---------------------------------------------- */
+
+.row[data-acting] { background: var(--tint); }
+.row[data-done] .state { opacity: 1; }
+
+.row[data-leaving] {
+  opacity: 0;
+  transform: translateX(1.5rem);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .row[data-leaving] {
+    transition: opacity 240ms ease, transform 240ms ease;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No sliding, but the outcome still shows before the list reloads. */
+  .row[data-leaving] { transform: none; }
+}
+
 .empty {
   font-family: var(--serif);
   font-style: italic;

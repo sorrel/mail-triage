@@ -152,7 +152,9 @@ def test_a_vetoed_message_is_refused_even_when_the_page_asks_to_file_it(tmp_path
 
 def test_a_folder_override_files_where_the_page_said(tmp_path):
     mail = fake_mail()
-    router, session = build(tmp_path, mail=mail)
+    # build_with_folders, not build: a folder the run never offered is refused,
+    # so the override needs the destination to be on the allowlist.
+    router, session = build_with_folders(tmp_path, mail=mail)
     (identifier,) = session.entries
     router.handle(api(
         "/api/decisions", method="POST",
@@ -458,3 +460,101 @@ def test_an_invented_action_is_refused(tmp_path):
     (identifier,) = session.entries
     assert decide(router, identifier, "incinerate").status == 400
     assert not mail.moved
+
+
+# --- choosing a destination --------------------------------------------------
+
+def build_with_folders(tmp_path, proposals=None, mail=None):
+    config = Config(account_url_prefix="imap://AAAAAAAA", local_dir=tmp_path / "local")
+    session = Session(proposals if proposals is not None else [proposal()])
+    static = tmp_path / "static"
+    static.mkdir(exist_ok=True)
+    router = Router(
+        session=session, config=config, mail=mail or fake_mail(),
+        accounts=ACCOUNTS, static_dir=static, token=TOKEN, port=PORT,
+        folders=["Filed/Orders", "Filed/Keep"],
+    )
+    return router, session
+
+
+def test_the_folder_list_is_served_for_the_picker(tmp_path):
+    router, _ = build_with_folders(tmp_path)
+    response = router.handle(api("/api/folders"))
+    assert response.status == 200
+    assert json.loads(response.body)["folders"] == ["Filed/Keep", "Filed/Orders"]
+
+
+def test_a_bill_with_nowhere_to_go_files_to_a_chosen_folder(tmp_path):
+    """The live case: the classifier was 0.98 confident, but its folder is not
+    in the filing account, so held_folder is None and only the user can say."""
+    mail = fake_mail()
+    router, session = build_with_folders(
+        tmp_path,
+        proposals=[held("invoice", "the subject looks like a bill", folder=None)],
+        mail=mail,
+    )
+    (identifier,) = session.entries
+    response = decide(router, identifier, "file", override=True, folder="Filed/Keep")
+    assert response.status == 200
+    assert json.loads(response.body)["moved"] == 1
+    assert mail.moved[0][1] == "Filed/Keep"
+
+
+def test_a_folder_the_run_never_offered_is_refused(tmp_path):
+    """Never trust a client with a destination."""
+    mail = fake_mail()
+    router, session = build_with_folders(tmp_path, mail=mail)
+    (identifier,) = session.entries
+    response = decide(router, identifier, "file", folder="Somewhere/Else")
+    assert response.status == 400
+    assert not mail.moved
+
+
+def test_a_chosen_folder_is_recorded_as_a_correction(tmp_path):
+    """Answering teaches the model, not just this one message — 'learn'
+    weights a correction above plain history."""
+    mail = fake_mail()
+    router, session = build_with_folders(tmp_path, mail=mail)
+    (identifier,) = session.entries
+    response = decide(router, identifier, "file", folder="Filed/Keep")
+    assert json.loads(response.body)["corrections"] == 1
+    assert (tmp_path / "local" / "corrections.jsonl").exists()
+
+
+def test_agreeing_with_the_proposal_records_no_correction(tmp_path):
+    """Agreeing teaches nothing the history does not already say."""
+    mail = fake_mail()
+    router, session = build_with_folders(tmp_path, mail=mail)
+    (identifier,) = session.entries
+    response = decide(router, identifier, "file")
+    assert json.loads(response.body)["corrections"] == 0
+
+
+def test_two_overlapping_applies_move_the_mail_once(tmp_path):
+    """The live failure, 9 August 2026: Apply was pressed twice before the
+    first request finished. The server is threaded, so both passed the
+    "already applied?" check and both moved the same mail. The second move
+    failed harmlessly — and wrote 'failed' over the first's 'moved' in the
+    journal, which undo skips. Messages that had really moved could not be
+    put back.
+    """
+    import threading as _threading
+
+    mail = fake_mail()
+    router, session = build_with_folders(tmp_path, mail=mail)
+    (identifier,) = session.entries
+    payload = {"decisions": [{"id": identifier, "action": "file"}]}
+    results = []
+
+    def apply():
+        results.append(router.handle(api("/api/decisions", method="POST", payload=payload)))
+
+    threads = [_threading.Thread(target=apply) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert all(response.status == 200 for response in results)
+    assert len(mail.moved) == 1
+    assert sum(json.loads(response.body)["moved"] for response in results) == 1

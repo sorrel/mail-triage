@@ -20,6 +20,7 @@ const token = document.querySelector('meta[name="triage-token"]').content;
 history.replaceState(null, "", "/");
 
 const chosen = new Map();
+let folders = [];
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -110,6 +111,12 @@ function row(proposal) {
   article.append(metrics);
 
   const actions = el("div", "row-actions");
+  // A message with nowhere to go needs to be told where. That is the only
+  // way to file a bill whose predicted folder is not in the filing account,
+  // and the only way to file mail with no history at all.
+  if (!proposal.folder && !proposal.held_folder && proposal.action !== "delete") {
+    actions.append(picker(proposal, article));
+  }
   for (const offer of offers(proposal)) {
     const button = el("button", null, offer.label);
     button.type = "button";
@@ -165,6 +172,46 @@ function offers(proposal) {
  * form-action 'none', and a form here would be betting on how each browser
  * scopes that directive. Escape and the backdrop resolve to "no", so every
  * way out that is not the explicit button leaves the mail alone. */
+/* Choosing a destination for a message that has none. The chosen folder is
+ * recorded as a correction and weighted above plain history at the next
+ * 'learn', so answering this once teaches the model rather than only moving
+ * one message. */
+function picker(proposal, article) {
+  const wrapper = el("span", "picker");
+  const select = document.createElement("select");
+  select.className = "folders";
+  select.setAttribute("aria-label", "Folder to file this to");
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "File to…";
+  select.append(blank);
+  for (const name of folders) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.append(option);
+  }
+  select.addEventListener("change", async () => {
+    if (!select.value) return;
+    const question = confirmationFor(proposal);
+    if (question && !(await confirmOverride(question))) {
+      select.value = "";
+      return;
+    }
+    choose(proposal.id, "file", article, Boolean(question), select.value);
+  });
+  wrapper.append(select);
+  return wrapper;
+}
+
+function confirmationFor(proposal) {
+  if (!proposal.veto) return null;
+  if (proposal.veto_kind === "deletion") return null;
+  return proposal.veto_kind === "invoice"
+    ? "This looks like a bill. File it away anyway?"
+    : "This may be waiting on a reply from you. File it away anyway?";
+}
+
 function confirmOverride(question) {
   const dialog = document.getElementById("confirm");
   document.getElementById("confirm-question").textContent = question;
@@ -186,12 +233,13 @@ document.getElementById("confirm-yes").addEventListener("click", () => {
   document.getElementById("confirm").close("yes");
 });
 
-function choose(id, action, article, override = false) {
-  chosen.set(id, { action, override });
+function choose(id, action, article, override = false, folder = null) {
+  chosen.set(id, { action, override, folder });
   article.dataset.chosen = action;
   const state = article.querySelector(".state");
   state.dataset.action = action;
-  state.textContent = { file: "will file", bin: "will bin", skip: "skipping" }[action];
+  const words = { file: "will file", bin: "will bin", skip: "skipping" };
+  state.textContent = folder ? `will file → ${folder}` : words[action];
   tally();
 }
 
@@ -210,6 +258,9 @@ function tally() {
 
 async function load() {
   try {
+    if (folders.length === 0) {
+      ({ folders } = await api("/api/folders"));
+    }
     const { proposals } = await api("/api/proposals");
     loaded = proposals;
     chosen.clear();
@@ -258,25 +309,71 @@ async function load() {
 
 /* --- applying ------------------------------------------------------------ */
 
+const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+function pause(milliseconds) {
+  if (REDUCED_MOTION.matches) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+/* Applying should be something you watch happen, not a list that blinks and
+ * comes back different. Each chosen row says what is being done to it, then
+ * leaves — one after another, so the order is legible — and only then is the
+ * list reloaded. Under prefers-reduced-motion the states still appear; the
+ * waiting does not. */
+async function showDeparture(article, action) {
+  const state = article.querySelector(".state");
+  if (state) {
+    state.textContent = action === "bin" ? "binning…" : "filing…";
+  }
+  article.dataset.acting = "true";
+  await pause(140);
+  if (state) state.textContent = action === "bin" ? "binned" : "filed";
+  article.dataset.done = "true";
+  await pause(220);
+  article.dataset.leaving = "true";
+  await pause(REDUCED_MOTION.matches ? 0 : 260);
+}
+
 document.getElementById("apply").addEventListener("click", async () => {
   clearFailure();
   const decisions = [...chosen].map(([id, choice]) => ({
     id,
     action: choice.action,
     override: choice.override,
+    folder: choice.folder,
   }));
   if (decisions.length === 0) return;
+  const apply = document.getElementById("apply");
+  apply.disabled = true;
+  document.getElementById("tally").textContent = "Moving…";
   try {
     const result = await api("/api/decisions", {
       method: "POST",
       body: JSON.stringify({ decisions }),
     });
+    // Only the moves that actually happened are shown leaving. A skip stays
+    // exactly where it is, and a failure must not be animated away as though
+    // it had worked.
+    for (const decision of decisions) {
+      if (decision.action === "skip") continue;
+      const article = document.querySelector(`.row[data-id="${decision.id}"]`);
+      if (article && result.moved > 0) await showDeparture(article, decision.action);
+    }
     await load();
-    document.getElementById("tally").textContent =
-      `Moved ${result.moved}${result.failed ? `, ${result.failed} failed` : ""}.`;
+    const bits = [`Moved ${result.moved}`];
+    if (result.failed) bits.push(`${result.failed} failed`);
+    if (result.corrections) {
+      bits.push(
+        `${result.corrections} correction${result.corrections === 1 ? "" : "s"} recorded`
+      );
+    }
+    document.getElementById("tally").textContent = `${bits.join(" · ")}.`;
     document.getElementById("undo").hidden = result.moved === 0;
   } catch (error) {
     fail(error);
+  } finally {
+    apply.disabled = chosen.size === 0;
   }
 });
 
