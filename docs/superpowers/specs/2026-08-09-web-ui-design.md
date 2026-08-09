@@ -92,7 +92,8 @@ together:
 
 | Module | Responsibility |
 |---|---|
-| `web/server.py` | Socket, threading, lifecycle, and every security check |
+| `web/security.py` | The checks of the section below, as one pure function |
+| `web/server.py` | Socket, threading, lifecycle, browser launch |
 | `web/routes.py` | Pure `Request -> Response`. No sockets, no globals |
 | `web/session.py` | The run's in-memory state: proposals, decisions, run id |
 | `web/payloads.py` | Dataclasses to JSON-safe dicts, and back |
@@ -125,7 +126,6 @@ mail-triage web
    POST /api/undo     ───────────▶ journal.undo_run, this run only
    GET  /api/unsubscribe ────────▶ ranked candidates (on demand: costs
    POST /api/unsubscribe/send ───▶ mailto only, existing path      AppleScript)
-   GET  /api/unsubscribe/check ──▶ bounces against what we sent
 ```
 
 The unsubscribe iframe is **not** in that list. The browser loads the
@@ -280,8 +280,8 @@ without touching mail — `FakeMail` throughout, as the suite does today.
 
 **In:** the `web` command; the proposal view; file / bin / skip; a folder
 override recorded as a correction (reusing `corrections.py`, weighted 10× as
-it already is); Apply and Undo; the unsubscribe panel with mailto sending,
-the bounce check, and the sandboxed iframe for https targets.
+it already is); Apply and Undo; the unsubscribe panel with mailto sending and
+the sandboxed iframe for https targets.
 
 **Out, by decision:**
 
@@ -297,3 +297,6 @@ the bounce check, and the sandboxed iframe for https targets.
   by the `Host` check.
 - *HTTP one-click unsubscribe performed by the tool.* Still refused. The
   iframe is the browser's request, made on a click.
+- *The bounce check.* `mail-triage unsubscribe --check` already does it well,
+  it needs no visual treatment, and a send here is recorded in exactly the
+  same log, so the terminal check covers browser sends too.
