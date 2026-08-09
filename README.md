@@ -176,7 +176,54 @@ undoable exactly as a terminal run is. Mail a guard held back cannot be filed
 from the browser at all; the guards are enforced on the server, not in the
 page.
 
-`j`/`k` move, `f` files, `b` bins, `s` skips, `⌘⏎` applies.
+#### What a message shows
+
+Each row carries the sender, the subject, where it is going, and *why* — the
+same reasoning the terminal prints, in the same words. A confidence figure and
+a small meter sit on the right, with the intent spelt out beside them ("will
+file", "will bin") so no meaning rests on colour alone.
+
+A message a guard held back says so instead, in place of the destination: what
+the guard was, and the folder it *would* have gone to, struck through. Those
+rows are the ones to read.
+
+#### Deciding
+
+Every filable message gets a folder box, not only the ones with nowhere to go.
+It is a typed, fuzzy-matched list of your real folders with the expected one
+already at the top, so Return accepts the proposal and typing is only needed
+to disagree. A folder you type over a proposal is recorded as a correction and
+weighted ten times ordinary history at the next `learn` — answering once
+teaches the model rather than moving one message.
+
+What a held message offers depends on why it was held, mirroring the rules the
+server enforces:
+
+- **Held because you keep binning this sender** — Bin, on one click, and File
+  if there is somewhere to file it. Binning is the obvious answer here, not an
+  override.
+- **Held as a possible bill, or as possibly awaiting a reply** — filing only,
+  once, and it asks first by name. Never binning, and never from the keyboard.
+
+#### The keyboard
+
+The whole page works without a mouse. Two axes: up and down move between
+messages, left and right along the controls of the message you are on.
+
+| Key | What it does |
+|---|---|
+| `↑` `↓` or `k` `j` | Move between messages |
+| `←` `→` | Move along that message's controls |
+| `f` | Open the folder box (it does not file blind) |
+| `b` | Bin — where the button exists and asks nothing |
+| `s` | Skip |
+| `⌘↵` | Apply, from anywhere, including mid-word in the folder box |
+| `esc` | Close the folder box, or answer "leave it" to a confirmation |
+
+A keystroke presses the message's own button, so it can only ever do what a
+click would, and a button that stops to ask has no key at all. In a
+confirmation, `L` leaves the mail alone and `F` files it; Escape, the backdrop
+and the default focus all mean "leave it".
 
 **The unsubscribe panel** ranks lists by what you bin without reading. A
 `mailto` list is left by sending the request, as the terminal does. An
@@ -330,6 +377,22 @@ things are worth knowing.
 A Gmail inbox is a *label*, not a mailbox. Apple Mail stores every Gmail
 message under `[Gmail]/All Mail` and records inbox membership separately, so
 mail-triage reads that membership rather than filtering on the mailbox.
+
+That label is also why a Gmail source wants an `archive`:
+
+```toml
+archive = "[Gmail]/All Mail"
+```
+
+Filing a Gmail message into another account's tree *copies* it and leaves the
+inbox label alone — Mail reports success whilst the message sits exactly where
+it was, to be filed again, and copied again, on the next run. Moving the
+leftover to `[Gmail]/All Mail` is what removes the label; it is Gmail's own
+word for archiving, and it works because it is a move *within* the account.
+mail-triage does this on every crossing and then checks, and a move it cannot
+prove is reported as a failure rather than counted as a success. Without an
+`archive` set there is nothing to clear the label with, so filing out of Gmail
+into another account is reported as a failure instead.
 
 `ignore` keeps Gmail's pseudo-folders out of the filing and deletion counts.
 `[Gmail]/All Mail` contains every message in the account, so counting it as a
