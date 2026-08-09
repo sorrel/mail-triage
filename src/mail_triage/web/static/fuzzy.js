@@ -6,17 +6,17 @@
  * page, and here it can be tested (tests/test_web_fuzzy.py drives it through
  * node) rather than eyeballed in a browser.
  *
- * A match is a subsequence — "hw" finds "Home/Web" — because that is what
+ * A match is a subsequence — "hw" finds "House/Web" — because that is what
  * makes a deep folder tree reachable in three or four keystrokes. Scoring
  * then decides which of the matches you actually meant:
  *
  * - a character starting a path segment or a word is worth far more than one
- *   in the middle, so "hw" prefers "Home/Web" over "Show/answer"
+ *   in the middle, so "hw" prefers "House/Web" over "Show/answer"
  * - consecutive characters compound, so typing more of a real name wins
  * - matching within the leaf beats matching a parent, because the leaf is
  *   what people call the folder
- * - shorter names break ties, so "Work" beats "Work/Work Tech/Newsletters"
- *   when both match equally well
+ * - shorter names break ties, so "Office" beats
+ *   "Office/Office Kit/Newsletters" when both match equally well
  */
 
 const SEPARATORS = "/ -_.";

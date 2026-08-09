@@ -61,10 +61,19 @@ def _proposal_payload(identifier: str, proposal: Proposal, accounts: dict[str, s
 
 
 def proposals_payload(session: Session, accounts: dict[str, str]) -> dict:
+    """What is still to be decided.
+
+    Messages already applied are left out. The run holds its proposals in
+    memory for the life of the process, so without this a message fades away
+    on Apply and then reappears on the next load, looking exactly as though
+    the move had been undone. It had not — the mail moved, and the list was
+    simply still describing the inbox as it was when the run started.
+    """
     return {
         "proposals": [
             _proposal_payload(identifier, proposal, accounts)
             for identifier, proposal in session.entries.items()
+            if not session.is_applied(identifier)
         ]
     }
 

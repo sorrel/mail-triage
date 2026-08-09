@@ -20,14 +20,14 @@ FUZZY = (
 )
 
 FOLDERS = [
-    "Home",
-    "Home/Web",
-    "Home/Orders",
-    "Home/Accounts",
-    "Home/Home Tech",
-    "Work",
-    "Work/Conf",
-    "Work/Work Tech/Newsletters",
+    "House",
+    "House/Web",
+    "House/Parcels",
+    "House/Admin",
+    "House/House Kit",
+    "Office",
+    "Office/Conf",
+    "Office/Office Kit/Newsletters",
     "Shopping/Wishlist",
     "Show/answers",
 ]
@@ -51,16 +51,16 @@ def rank(query, folders=None, expected=None):
 
 def test_an_initialism_finds_the_nested_folder():
     """The point of the whole thing: a deep tree in three keystrokes."""
-    assert rank("hw")[0] == "Home/Web"
+    assert rank("hw")[0] == "House/Web"
 
 
 def test_a_segment_start_beats_a_letter_in_the_middle():
-    assert rank("hw").index("Home/Web") < rank("hw").index("Show/answers")
+    assert rank("hw").index("House/Web") < rank("hw").index("Show/answers")
 
 
 def test_typing_the_leaf_finds_it():
-    assert rank("news")[0] == "Work/Work Tech/Newsletters"
-    assert rank("orders")[0] == "Home/Orders"
+    assert rank("news")[0] == "Office/Office Kit/Newsletters"
+    assert rank("parcels")[0] == "House/Parcels"
 
 
 def test_a_non_matching_query_returns_nothing():
@@ -68,19 +68,19 @@ def test_a_non_matching_query_returns_nothing():
 
 
 def test_matching_is_case_insensitive():
-    assert rank("HOME/WEB")[0] == "Home/Web"
-    assert rank("home/web")[0] == "Home/Web"
+    assert rank("HOUSE/WEB")[0] == "House/Web"
+    assert rank("house/web")[0] == "House/Web"
 
 
 def test_the_shorter_name_wins_a_tie():
-    """"work" matches both; the one actually called Work should lead."""
-    assert rank("work")[0] == "Work"
+    """"office" matches both; the one actually called Office should lead."""
+    assert rank("office")[0] == "Office"
 
 
 def test_with_nothing_typed_the_expected_folder_leads():
     """Open the picker, press Return, and it files where the tool expected."""
-    ranked = rank("", expected="Home/Orders")
-    assert ranked[0] == "Home/Orders"
+    ranked = rank("", expected="House/Parcels")
+    assert ranked[0] == "House/Parcels"
     assert len(ranked) == len(FOLDERS)
 
 
@@ -97,4 +97,4 @@ def test_an_expected_folder_that_is_not_a_real_folder_is_ignored():
 
 def test_the_expected_folder_is_not_forced_ahead_of_what_you_typed():
     """Typing is disagreeing. It must win."""
-    assert rank("conf", expected="Home/Orders")[0] == "Work/Conf"
+    assert rank("conf", expected="House/Parcels")[0] == "Office/Conf"

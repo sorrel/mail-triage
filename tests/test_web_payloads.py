@@ -113,3 +113,16 @@ def test_a_mailto_target_is_never_published_as_a_url():
     """The address is the server's business; the page only names the sender."""
     (row,) = candidates_payload([option()])["candidates"]
     assert row["target"] is None
+
+
+def test_an_applied_message_leaves_the_list():
+    """It faded away on Apply and then came back, looking exactly as though
+    the move had been undone. It had not: the run holds its proposals for the
+    life of the process, and the list was still describing the inbox as it
+    was when the run started."""
+    session = Session([proposal(rowid=1), proposal(rowid=2)])
+    first, _ = list(session.entries)
+    session.mark_applied([first])
+    rows = proposals_payload(session, ACCOUNTS)["proposals"]
+    assert len(rows) == 1
+    assert rows[0]["id"] != first

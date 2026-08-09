@@ -17,13 +17,22 @@
   <nav class="actions">
     <button type="button" id="open-lists">Mailing lists</button>
     <button type="button" id="undo" hidden>Undo</button>
-    <button type="button" class="primary" id="apply">Apply</button>
+    <button type="button" class="primary" id="apply" title="Apply (⌘ Return)">
+      Apply <kbd>⌘↵</kbd>
+    </button>
   </nav>
 </header>
 
 <p class="alert" id="alert" hidden role="alert"></p>
 
 <main id="proposals" aria-live="polite"></main>
+
+<p class="legend">
+  <kbd>↑</kbd><kbd>↓</kbd> or <kbd>j</kbd><kbd>k</kbd> move ·
+  <kbd>←</kbd><kbd>→</kbd> along a message’s controls ·
+  <kbd>f</kbd> folder · <kbd>b</kbd> bin · <kbd>s</kbd> skip ·
+  <kbd>⌘↵</kbd> apply
+</p>
 
 <dialog id="confirm" class="narrow">
   <h2>Are you sure?</h2>

@@ -283,6 +283,30 @@ main { max-width: var(--measure); margin: 0 auto; }
   .row[data-leaving] { transform: none; }
 }
 
+kbd {
+  font: inherit;
+  font-size: 0.6875rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  color: var(--ink-soft);
+}
+
+button kbd { margin-left: 0.35rem; border-color: currentColor; color: inherit; }
+
+/* The shortcuts, said once, quietly, where they can be found without being
+ * in the way. */
+.legend {
+  max-width: var(--measure);
+  margin: 2.5rem auto 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--rule);
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  line-height: 2;
+}
+
 .empty {
   font-family: var(--serif);
   font-style: italic;

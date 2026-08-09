@@ -168,14 +168,9 @@ function offers(proposal) {
   ];
 }
 
-/* Buttons rather than <form method="dialog">: the page's own CSP sets
- * form-action 'none', and a form here would be betting on how each browser
- * scopes that directive. Escape and the backdrop resolve to "no", so every
- * way out that is not the explicit button leaves the mail alone. */
-/* Choosing a destination for a message that has none. The chosen folder is
- * recorded as a correction and weighted above plain history at the next
- * 'learn', so answering this once teaches the model rather than only moving
- * one message. */
+/* Choosing where a message goes. The chosen folder is recorded as a
+ * correction and weighted above plain history at the next 'learn', so
+ * answering once teaches the model rather than only moving one message. */
 const VISIBLE_MATCHES = 7;
 
 function picker(proposal, article) {
@@ -250,8 +245,11 @@ function picker(proposal, article) {
   input.addEventListener("input", draw);
   input.addEventListener("blur", () => setTimeout(close, 120));
   input.addEventListener("keydown", (event) => {
-    // Kept off the page's own j/k/f handler: inside this box those are just
-    // letters somebody is typing.
+    // Apply is deliberately let through: finishing a choice and applying in
+    // one breath is the whole point of a keyboard flow.
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) return;
+    // Everything else is kept off the page's own j/k/f handler: inside this
+    // box those are just letters somebody is typing.
     event.stopPropagation();
     if (event.key === "ArrowDown" || (event.key === "Tab" && !event.shiftKey && matches.length)) {
       event.preventDefault();
@@ -283,6 +281,10 @@ function confirmationFor(proposal) {
     : "This may be waiting on a reply from you. File it away anyway?";
 }
 
+/* Buttons rather than <form method="dialog">: the page's own CSP sets
+ * form-action 'none', and a form here would be betting on how each browser
+ * scopes that directive. Escape and the backdrop resolve to "no", so every
+ * way out that is not the explicit button leaves the mail alone. */
 function confirmOverride(question) {
   const dialog = document.getElementById("confirm");
   document.getElementById("confirm-question").textContent = question;
@@ -461,7 +463,8 @@ document.getElementById("undo").addEventListener("click", async () => {
   try {
     const result = await api("/api/undo", { method: "POST", body: "{}" });
     await load();
-    document.getElementById("tally").textContent = `Put ${result.reversed} back.`;
+    document.getElementById("tally").textContent =
+      `Put ${result.reversed} back. Restart the run to act on them again.`;
     document.getElementById("undo").hidden = true;
   } catch (error) {
     fail(error);
@@ -550,14 +553,71 @@ document.getElementById("frame").addEventListener("close", () => {
 
 /* --- keyboard ------------------------------------------------------------ */
 
+/* Two axes. Up and down move between messages; left and right move along
+ * the controls of the message you are on. j/k stay as they were, so the
+ * habit still works, and the arrows mean nobody has to know that.
+ *
+ * Inside the folder box the arrows belong to its match list and the letters
+ * are just letters, which is why that box stops keystrokes at its own edge. */
+function controlsOf(row) {
+  return [...row.querySelectorAll(".folder-input, .row-actions button")];
+}
+
+function moveAlong(row, step) {
+  const controls = controlsOf(row);
+  if (controls.length === 0) return;
+  const at = controls.indexOf(document.activeElement);
+  if (at < 0) {
+    // Coming from the row itself: rightwards picks up the first control,
+    // leftwards the last, so both directions land somewhere useful.
+    (step > 0 ? controls[0] : controls[controls.length - 1]).focus();
+    return;
+  }
+  const next = at + step;
+  // Off the left-hand end returns to the message, which is where the
+  // up/down navigation lives. Off the right-hand end simply stops.
+  if (next < 0) row.focus();
+  else if (next < controls.length) controls[next].focus();
+}
+
 document.addEventListener("keydown", (event) => {
-  if (event.target.matches("input, textarea")) return;
   if (document.querySelector("dialog[open]")) return;
+
+  // Apply, from anywhere — including mid-word in the folder box, which is
+  // where you tend to be when you finish choosing. Checked before every
+  // other rule for that reason.
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    document.getElementById("apply").click();
+    return;
+  }
+
+  const typing = event.target.matches("input, textarea");
   const rows = [...document.querySelectorAll(".row")];
   const current = document.activeElement.closest?.(".row");
   const index = rows.indexOf(current);
-  if (event.key === "j" && index < rows.length - 1) rows[index + 1].focus();
-  if (event.key === "k" && index > 0) rows[index - 1].focus();
+
+  const goDown = event.key === "ArrowDown" || (!typing && event.key === "j");
+  const goUp = event.key === "ArrowUp" || (!typing && event.key === "k");
+  if (goDown && index < rows.length - 1) {
+    event.preventDefault();
+    rows[index + 1].focus();
+    return;
+  }
+  if (goUp && index > 0) {
+    event.preventDefault();
+    rows[index - 1].focus();
+    return;
+  }
+
+  if (typing) return;
+
+  if (current && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
+    event.preventDefault();
+    moveAlong(current, event.key === "ArrowRight" ? 1 : -1);
+    return;
+  }
+
   // "f" opens the folder box rather than filing outright. The expected
   // folder leads the list, so f-Return is still two keys to accept — and the
   // same two keys are the start of typing somewhere else instead.
@@ -576,7 +636,6 @@ document.addEventListener("keydown", (event) => {
   if (current && "bs".includes(event.key)) {
     choose(current.dataset.id, { b: "bin", s: "skip" }[event.key], current);
   }
-  if (event.key === "Enter" && event.metaKey) document.getElementById("apply").click();
 });
 
 load();

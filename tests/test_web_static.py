@@ -209,3 +209,43 @@ def test_filed_rows_leave_slowly_enough_to_be_watched():
     styles = read("app.css")
     assert "opacity 520ms" in styles
     assert "height 420ms" in styles
+
+
+def test_arrows_move_between_messages_as_well_as_j_and_k():
+    """The habit still works; the arrows mean nobody has to know it exists."""
+    source = read("app.js")
+    assert 'event.key === "ArrowDown" || (!typing && event.key === "j")' in source
+    assert 'event.key === "ArrowUp" || (!typing && event.key === "k")' in source
+
+
+def test_left_and_right_move_along_the_controls_of_a_message():
+    source = read("app.js")
+    assert 'event.key === "ArrowRight" || event.key === "ArrowLeft"' in source
+    assert "function moveAlong(row, step)" in source
+
+
+def test_going_off_the_left_hand_end_returns_to_the_message():
+    """Otherwise focus is stranded among the buttons with no way back to the
+    up/down navigation."""
+    assert "if (next < 0) row.focus();" in read("app.js")
+
+
+def test_arrow_navigation_does_not_also_scroll_the_page():
+    source = read("app.js")
+    assert source.count("event.preventDefault();") >= 4
+
+
+def test_apply_can_be_pressed_from_the_keyboard_and_says_so():
+    """Reachable mid-word in the folder box, which is where you are when you
+    have just finished choosing."""
+    source = read("app.js")
+    markup = read("index.html")
+    assert 'event.key === "Enter" && (event.metaKey || event.ctrlKey)' in source
+    assert "<kbd>⌘↵</kbd>" in markup
+
+
+def test_the_shortcuts_are_written_down_on_the_page():
+    markup = read("index.html")
+    assert 'class="legend"' in markup
+    for key in ("<kbd>f</kbd>", "<kbd>b</kbd>", "<kbd>s</kbd>", "<kbd>→</kbd>"):
+        assert key in markup, key
