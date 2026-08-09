@@ -84,6 +84,57 @@ def test_an_archive_clears_the_label_and_the_move_then_counts(tmp_path):
     assert not mail.message_exists("<issue-350@list.example>", "INBOX", "Gmail")
 
 
+class OptimisticMail(FakeMail):
+    """Mail as it actually answered on 9 August 2026.
+
+    Asked whether the message has left the inbox, it says yes — from its own
+    local state, before the server has confirmed anything — and the label is
+    back by the time anybody looks again. The contents underneath never
+    changed, which is the point: the *reading* is wrong, not the mailbox.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.inbox_questions = 0
+
+    def message_exists(self, message_key: str, folder: str, account: str) -> bool:
+        if folder == "INBOX":
+            self.inbox_questions += 1
+            if self.inbox_questions == 1:
+                return False
+        return super().message_exists(message_key, folder, account)
+
+
+def test_the_label_is_cleared_even_when_mail_claims_the_message_already_left(tmp_path):
+    """The live failure this whole mechanism exists to stop, one layer deeper.
+
+    Clearing the label used to be conditional on the very reading that cannot
+    be trusted: ask Mail whether the message is still in the inbox, and only
+    archive it if the answer is yes. On 9 August 2026 the answer was no, the
+    archive step was skipped, the journal recorded "moved" — and the message
+    was still labelled INBOX fifteen minutes later, to be filed again on the
+    next run. Four runs, four copies in the destination.
+
+    So the archive is no longer a repair conditional on a diagnosis. It runs
+    on every cross-account move, and the check only reports.
+    """
+    mail = OptimisticMail(
+        inbox=[1],
+        mailboxes=["Filed/News", "[Gmail]/Bin", "[Gmail]/All Mail"],
+        keys={1: "<issue-350@list.example>"},
+        leaves_original=True,
+    )
+    config = gmail_config(tmp_path, archive="[Gmail]/All Mail")
+    journal = Journal(config)
+    journal.begin("test-run")
+    execute([gmail_decision()], mail, journal, config)
+    # The mailbox itself, not Mail's opinion of it: the label really is gone.
+    assert mail.folder_message_ids("INBOX", "Gmail") == []
+    assert mail.folder_message_ids("[Gmail]/All Mail", "Gmail") == [1]
+    # And exactly one copy in the destination — no second copy next run.
+    assert mail.folder_message_ids("Filed/News", "iCloud") == [1]
+
+
 def test_without_an_archive_the_same_move_is_reported_as_a_failure(tmp_path):
     """No configured way to clear the label, so the move cannot be proved —
     and an unproven move is never reported as a success."""

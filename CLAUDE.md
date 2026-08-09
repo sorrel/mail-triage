@@ -190,6 +190,21 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   from the inbox. `FakeMail` models that boundary rather than leaving the
   original on every move; a fake that did the latter could only ever test
   the failure path, which is how the success path went uncovered at first.
+- **Asking Mail to confirm what Mail just told you is the same claim twice.**
+  The fix above verified a cross-account move with `message_exists`, and
+  cleared the Gmail label only when that reading said the message was still
+  in the inbox. On 9 August 2026 the reading came back "already gone" —
+  Mail answering from its own optimistic local state, before the server had
+  confirmed — so the archive step was skipped, the journal recorded "moved",
+  and the label was back fifteen minutes later. Four runs, four copies of one
+  newsletter in the destination, the original labelled INBOX throughout. The
+  shape to recognise: putting an unreliable reading *in charge of the repair*
+  means the repair is skipped exactly when it is needed. The archive now runs
+  on every crossing and the check only reports. Note what is still not
+  guaranteed — the final check can be optimistic too, so "moved" means the
+  label clear was attempted and looked right, not that the server agreed.
+  Filing is not yet idempotent: if a label survives anyway, the next run
+  files a second copy.
 - **Binding to 127.0.0.1 does not stop a web page from reaching the server.**
   DNS rebinding resolves an attacker's hostname to 127.0.0.1, and their page is
   then same-origin with ours. The strict `Host` check in `web/security.py` is
