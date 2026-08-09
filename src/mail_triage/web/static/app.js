@@ -64,6 +64,10 @@ function httpsTarget(value) {
 
 /* --- the list ------------------------------------------------------------ */
 
+/* Single-key equivalents for the row's buttons. Filing is absent on purpose:
+ * "f" opens the folder box instead, which is a choice rather than an action. */
+const KEYSTROKES = { bin: "b", skip: "s" };
+
 function row(proposal) {
   const article = el("article", "row");
   article.tabIndex = 0;
@@ -120,6 +124,12 @@ function row(proposal) {
   for (const offer of offers(proposal)) {
     const button = el("button", null, offer.label);
     button.type = "button";
+    // The keystroke is the button, so it exists exactly when the button does
+    // and never when the button would stop to ask. Deciding this here rather
+    // than in the keyboard handler is what stopped the two disagreeing.
+    if (!offer.confirm && KEYSTROKES[offer.action]) {
+      button.dataset.key = KEYSTROKES[offer.action];
+    }
     button.addEventListener("click", async () => {
       if (offer.confirm && !(await confirmOverride(offer.confirm))) return;
       choose(proposal.id, offer.action, article, offer.override);
@@ -408,9 +418,22 @@ async function load() {
       for (const proposal of rows) main.append(row(proposal));
     }
     tally();
+    focusFirstRow();
   } catch (error) {
     fail(error);
   }
+}
+
+/* Every key below the Apply shortcut acts on the message you are on — and
+ * until this existed, you never were on one. A freshly drawn list left focus
+ * on <body>, so the arrows and "b" did nothing at all whilst plainly looking
+ * as though they should, and rebuilding the list threw focus back to <body>
+ * after every apply. Only claimed when nothing else holds it, so it cannot
+ * take the folder box out from under someone mid-word. */
+function focusFirstRow() {
+  const active = document.activeElement;
+  if (active && active !== document.body && active.isConnected) return;
+  document.querySelector(".row")?.focus({ preventScroll: true });
 }
 
 /* --- applying ------------------------------------------------------------ */
@@ -662,12 +685,18 @@ document.addEventListener("keydown", (event) => {
       return;
     }
   }
-  // Binning and skipping stay single keystrokes, but never on held mail: its
-  // buttons ask a question, and a keystroke is too cheap a way to answer one.
-  if (current && current.dataset.held) return;
-  if (current && !current.querySelector(".row-actions")) return;
-  if (current && "bs".includes(event.key)) {
-    choose(current.dataset.id, { b: "bin", s: "skip" }[event.key], current);
+  // Binning and skipping stay single keystrokes. Which rows allow which is
+  // not decided here: the keystroke presses the button, so it can only ever
+  // do what a click would, and mail whose button asks first has no key at
+  // all. Held mail is not blanket-refused — a message held because you keep
+  // binning this sender offers Bin without asking, and refusing "b" there
+  // was friction with nothing behind it.
+  if (current && Object.values(KEYSTROKES).includes(event.key)) {
+    const button = current.querySelector(`.row-actions button[data-key="${event.key}"]`);
+    if (button) {
+      event.preventDefault();
+      button.click();
+    }
   }
 });
 

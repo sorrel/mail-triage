@@ -22,7 +22,7 @@ from __future__ import annotations
 from mail_triage.config import Config
 from mail_triage.folders import account_prefix
 from mail_triage.journal import Journal, JournalEntry
-from mail_triage.mail_app import MailError, MailInterface
+from mail_triage.mail_app import MailError, MailInterface, MessageNotFoundError
 from mail_triage.review import Decision
 
 
@@ -131,7 +131,7 @@ def execute(
 
 
 def _left_the_inbox(entry: JournalEntry, mail: MailInterface, source) -> bool:
-    """Whether the message really is gone from the inbox it came from.
+    """Clear the source inbox's hold on the message, then say whether it went.
 
     **A move that reports success is not a message that left the inbox.** A
     Gmail inbox is a label rather than a mailbox, so a cross-account move
@@ -141,33 +141,48 @@ def _left_the_inbox(entry: JournalEntry, mail: MailInterface, source) -> bool:
     mailbox on 9 August 2026 — four attempts on one newsletter left three
     copies in the destination and the original in the Gmail inbox throughout.
 
-    So it is checked rather than believed, and where the source names an
-    ``archive`` the label is cleared by moving the leftover there — Gmail's
-    own word for what removes an inbox label. The check is repeated
-    afterwards, because an archive step that fails silently would put us back
-    exactly where we started.
+    Where the source names an ``archive``, moving the leftover there is what
+    removes the label — Gmail's own word for it, and a move *within* the
+    account, which is the boundary that makes it work.
 
-    Failing to verify counts as *not* left: an unproven move is reported as a
-    failure, never as a success.
+    **The archive runs on every crossing, not only when Mail says it is
+    needed.** It used to be conditional on asking Mail whether the message
+    was still in the inbox, which put the unreliable reading in charge of the
+    repair. On 9 August 2026 that reading came back "already gone" — Mail
+    answering from its own optimistic local state, before the server had
+    confirmed — so the label was never cleared, the journal recorded "moved",
+    and the label was back fifteen minutes later. Four runs, four copies.
+    Asking the component that just reported success whether it really
+    succeeded is not an independent check; it is the same claim twice.
+
+    So the question is no longer asked before acting, only after, and the
+    answer is a report rather than a decision.
+
+    A source with no ``archive`` has nothing to clear the label with, so for
+    it the check is the whole story — which is right for the accounts that
+    move properly (Exchange, iCloud), where the message has genuinely gone
+    and there is nothing to repair. Failing to verify still counts as *not*
+    left: an unproven move is reported as a failure, never as a success.
     """
     if not entry.message_key:
         return True
+    if entry.to_account != entry.from_account and source.archive:
+        try:
+            mail.move_message(
+                0,
+                source.archive,
+                source.name,
+                source_folder=source.inbox,
+                message_key=entry.message_key,
+                source_account=source.name,
+            )
+        except MessageNotFoundError:
+            # Genuinely gone from the inbox already — an account whose moves
+            # behave, or a label that cleared itself. Nothing to clear.
+            pass
+        except MailError:
+            return False
     try:
-        if not mail.message_exists(entry.message_key, source.inbox, source.name):
-            return True
-    except MailError:
-        return False
-    if not source.archive:
-        return False
-    try:
-        mail.move_message(
-            0,
-            source.archive,
-            source.name,
-            source_folder=source.inbox,
-            message_key=entry.message_key,
-            source_account=source.name,
-        )
         return not mail.message_exists(entry.message_key, source.inbox, source.name)
     except MailError:
         return False

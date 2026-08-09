@@ -122,11 +122,41 @@ def test_the_override_confirmation_defaults_to_leaving_the_mail_alone():
     assert 'dialog.returnValue === "yes"' in source
 
 
-def test_held_mail_is_never_actioned_by_a_keystroke():
-    """The buttons on held mail ask a question; a keystroke is too cheap a
-    way to answer one."""
+def test_a_keystroke_can_only_do_what_a_click_would():
+    """The keystroke presses the row's own button rather than calling choose()
+    behind its back, so the two cannot drift apart — and a button that stops
+    to ask is given no key at all. Blanket-refusing every held row was the
+    earlier rule, and it refused "b" on mail whose Bin button asks nothing."""
     source = read("app.js")
-    assert "if (current && current.dataset.held) return;" in source
+    assert "if (!offer.confirm && KEYSTROKES[offer.action])" in source
+    assert 'button.dataset.key = KEYSTROKES[offer.action];' in source
+    assert 'current.querySelector(`.row-actions button[data-key="${event.key}"]`)' in source
+    assert "button.click();" in source
+
+
+def test_filing_has_no_single_keystroke_of_its_own():
+    """"f" opens the folder box: a choice, not an action."""
+    assert 'const KEYSTROKES = { bin: "b", skip: "s" };' in read("app.js")
+
+
+def test_a_freshly_drawn_list_puts_you_on_a_message():
+    """Every row shortcut acts on the message you are on. With focus left on
+    <body> — which is where rebuilding the list puts it — they all silently
+    did nothing whilst looking exactly as though they should work."""
+    source = read("app.js")
+    assert "function focusFirstRow()" in source
+    assert "focusFirstRow();" in source
+    # Never taken from whatever already holds it: the folder box is often
+    # focused when a reload lands.
+    assert "if (active && active !== document.body && active.isConnected) return;" in source
+
+
+def test_the_message_you_are_on_is_visible_when_clicked_as_well_as_tabbed_to():
+    """:focus-visible alone styles nothing after a mouse click, so the next
+    keystroke looks ignored when it went exactly where it should have."""
+    styles = read("app.css")
+    assert ".row:focus," in styles
+    assert ".row:focus-within { box-shadow: inset 3px 0 0 var(--file); }" in styles
 
 
 def test_a_bill_or_a_may_need_a_reply_is_never_offered_the_bin():
