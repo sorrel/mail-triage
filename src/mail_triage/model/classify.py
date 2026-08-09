@@ -67,6 +67,7 @@ class Classifier:
         deletion_index: dict[str, DeletionStats] | None = None,
         rules: dict[str, Rule] | None = None,
         attachments: dict[int, list[str]] | None = None,
+        never_personal: frozenset[str] | None = None,
     ) -> None:
         self.model = model
         self.config = config
@@ -102,6 +103,12 @@ class Classifier:
         # guard still works on subjects alone; it just misses the commonest
         # shape, a neutral subject with the invoice attached.
         self.attachments = attachments or {}
+        # Addresses the user has vouched for as never person-to-person. Needed
+        # where the message carries no bulk signal at all — an order
+        # confirmation from an ordinary-word address — and no header can
+        # supply one (see never_personal, which records why Feedback-Id was
+        # measured and rejected). Lifts the reply guard alone.
+        self.never_personal = never_personal or frozenset()
 
     def classify(self, message: MessageRow) -> Proposal:
         """Classify one message, then hold back anything that looks like a bill."""
@@ -265,8 +272,13 @@ class Classifier:
             # The sender address alone already proves this is bulk mail
             # (no-reply@ and friends) — no need to spend a header fetch.
             return proposal
+        if normalise_sender(message.sender) in self.never_personal:
+            # Likewise settled without headers: the user has already answered
+            # the question the fetch would have been asked to answer. Flagging
+            # is checked before this in _message_guards and still wins.
+            return proposal
         headers = self._fetch_headers(message)
-        veto = needs_attention(message, headers)
+        veto = needs_attention(message, headers, self.never_personal)
         if veto is not None:
             return self._vetoed(proposal, veto.reason, "attention")
         return proposal

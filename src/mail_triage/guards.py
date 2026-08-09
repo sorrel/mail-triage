@@ -6,8 +6,9 @@ both his choice, and nothing else:
 
 1. He flagged it — an explicit do-not-file marker, free to check.
 2. A human wrote it to him — i.e. it is not bulk mail. Bulk means a
-   ``List-Unsubscribe`` header is present, or the sender looks like a
-   no-reply address.
+   ``List-Unsubscribe`` header is present, the headers declare the message
+   automated, or the sender looks like a no-reply address or a minted
+   per-subscriber token.
 
 Unread status is deliberately excluded — clearing the unread pile is the
 point of the tool, not a reason to hold mail back.
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mail_triage.corpus import normalise_sender
 from mail_triage.envelope import MessageRow
 
 # Strong enough on their own to call a sender bulk without fetching headers —
@@ -57,6 +59,26 @@ _NO_REPLY_DISPLAY_NAMES = ("noreply", "donotreply")
 # is held back as though a person had written it.
 _BULK_PRECEDENCE_VALUES = ("bulk", "list", "junk")
 
+# A local part nobody could be called. Transactional mail — order
+# confirmations, despatch and delivery notices — is the awkward middle case:
+# it is not a newsletter, so there is nothing to unsubscribe from and no
+# List-Unsubscribe header, and plenty of senders set neither Precedence nor
+# Auto-Submitted either. With an ordinary-looking address that leaves the
+# guard no bulk evidence whatsoever, and it holds the message back for a
+# reply that will never be wanted.
+#
+# What remains is the address itself. A marketplace's despatch notices arrive
+# from the likes of "a1b2c3d4e5f60718@members.shop.example": a mailbox minted
+# per subscriber, not a person. Two shapes are recognised, both deliberately
+# narrow, because the cost of a false positive here is filing away mail that
+# wanted an answer.
+_TOKEN_MIN_LENGTH = 16
+_UNPRONOUNCEABLE_MIN_LENGTH = 12
+# "y" counts as a vowel: it makes the test *stricter* (fewer addresses look
+# unpronounceable), which is the direction that protects real correspondents.
+_VOWELS = frozenset("aeiouy")
+_HEX_DIGITS = frozenset("0123456789abcdef")
+
 
 @dataclass(frozen=True)
 class Veto:
@@ -89,6 +111,38 @@ def _display_name_says_no_reply(sender: str) -> bool:
         return False
     squashed = display.translate(_DISPLAY_NAME_SEPARATORS)
     return any(name in squashed for name in _NO_REPLY_DISPLAY_NAMES)
+
+
+def _local_part(sender: str) -> str:
+    """The address's local part, with any display name and separators removed.
+
+    The display name is dropped first: "Shop <a1b2c3…@members.shop.example>"
+    would otherwise carry "shop <" into the local part and make every token
+    address look pronounceable.
+    """
+    _, bracket, address = sender.casefold().partition("<")
+    address = address.rstrip(">") if bracket else sender.casefold()
+    local, at, _ = address.rpartition("@")
+    if not at:
+        return ""
+    return local.translate(_LOCAL_PART_SEPARATORS)
+
+
+def _looks_machine_generated(sender: str) -> bool:
+    """Whether the local part is a minted token rather than somebody's name.
+
+    Two shapes, both requiring real length, since short addresses are where
+    the human ones live — "deb" and "decaf" are hex through and through.
+
+    1. A long run of hex digits: the per-subscriber token such senders mint.
+       A name cannot reach 16 characters using only a–f and 0–9.
+    2. A long run with no vowel at all. Human names and role addresses have
+       vowels; generated ones frequently do not.
+    """
+    local = _local_part(sender)
+    if len(local) >= _TOKEN_MIN_LENGTH and set(local) <= _HEX_DIGITS:
+        return True
+    return len(local) >= _UNPRONOUNCEABLE_MIN_LENGTH and not (set(local) & _VOWELS)
 
 
 def _header(headers: dict[str, str], name: str) -> str | None:
@@ -134,15 +188,16 @@ def _normalise_local_part(sender: str) -> str:
 def is_bulk(sender: str, headers: dict[str, str] | None) -> bool:
     """Whether this message is bulk mail rather than person-to-person.
 
-    A no-reply-style address is decisive on its own, checked first so the
-    (expensive) headers are never required for the obvious case. Otherwise,
+    The address alone is decisive when it is a no-reply form or a minted
+    token, checked first so the (expensive) headers are never required for
+    the obvious cases. Otherwise,
     bulk is defined by the presence of a ``List-Unsubscribe`` header — an
     ordinary-looking address proves nothing by itself, so with headers
     unavailable (``None``) this returns ``False`` rather than assuming bulk.
     Assuming bulk from silence would be the failure mode this guard exists
     to prevent.
     """
-    if _looks_no_reply(sender):
+    if _looks_no_reply(sender) or _looks_machine_generated(sender):
         return True
     if headers is None:
         return False
@@ -151,8 +206,17 @@ def is_bulk(sender: str, headers: dict[str, str] | None) -> bool:
     return _headers_say_automated(headers)
 
 
-def needs_attention(message: MessageRow, headers: dict[str, str] | None) -> Veto | None:
+def needs_attention(
+    message: MessageRow,
+    headers: dict[str, str] | None,
+    never_personal: frozenset[str] = frozenset(),
+) -> Veto | None:
     """Decide whether ``message`` must stay in the inbox regardless of confidence.
+
+    ``never_personal`` is the set of addresses the user has vouched for as
+    never person-to-person — evidence the message itself does not carry. It
+    lifts this guard alone: flagging still wins above it, and every other
+    veto is decided elsewhere.
 
     ``headers`` is the message's raw headers, or ``None`` if they were never
     fetched (a no-reply sender made the fetch unnecessary) or could not be
@@ -167,6 +231,11 @@ def needs_attention(message: MessageRow, headers: dict[str, str] | None) -> Veto
     """
     if message.flagged:
         return Veto("you flagged this")
+    if normalise_sender(message.sender) in never_personal:
+        # The user has said this address never awaits a reply. Checked after
+        # flagging, which stays absolute, and before every header-derived
+        # signal, since a declaration settles the question on its own.
+        return None
     if is_bulk(message.sender, headers):
         return None
     if headers is None:

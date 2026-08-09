@@ -14,7 +14,12 @@ import mail_triage.cli as cli_module
 from mail_triage.cli import cli
 from mail_triage.mail_app import MailError, MailNotRunningError
 
-from tests.cli_helpers import StubMail, stub_config, triage_fixture_with_one_strong_sender
+from tests.cli_helpers import (
+    StubMail,
+    strong_sender_rows,
+    stub_config,
+    triage_fixture_with_one_strong_sender,
+)
 from tests.conftest import build_fixture_db
 
 
@@ -165,3 +170,54 @@ def test_learn_no_drift_flag_suppresses_the_drift_report(tmp_path, monkeypatch):
     result = runner.invoke(cli, ["learn", "--no-drift"])
     assert result.exit_code == 0
     assert "changed destination" not in result.output
+
+
+def test_triage_files_a_sender_declared_never_personal(tmp_path, monkeypatch):
+    """The never-personal declaration, proved to reach the command.
+
+    Same fixture and same headers as the veto test above — an ordinary sender
+    with no bulk signal whatsoever, which that test proves is held back. The
+    only difference is the declaration, so a reversion to the unwired state
+    (Classifier built without ``never_personal``) turns this red.
+    """
+    db_path = triage_fixture_with_one_strong_sender(tmp_path)
+    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
+    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    monkeypatch.setattr(
+        cli_module, "AppleScriptMail",
+        lambda: StubMail(headers={900: {"Subject": "Can you take a look"}}),
+    )
+    runner = CliRunner()
+    assert runner.invoke(cli, ["learn", "--no-drift"]).exit_code == 0
+
+    declared = runner.invoke(cli, ["rules", "--never-personal", "person@work.example"])
+    assert declared.exit_code == 0
+
+    result = runner.invoke(cli, ["triage", "--dry-run"])
+    assert result.exit_code == 0
+    assert "1 of 1 would be filed" in result.output
+    assert "Projects" in result.output
+    assert "may need a reply" not in result.output
+
+
+def test_triage_still_holds_a_flagged_message_from_a_never_personal_sender(tmp_path, monkeypatch):
+    """Flagging stays absolute — a declaration must not be able to undo it."""
+    now = int(time.time())
+    day = 86_400
+    db_path = tmp_path / "Envelope Index"
+    rows = strong_sender_rows(now, day)
+    rows[-1] = {**rows[-1], "flagged": 1}
+    build_fixture_db(db_path, rows)
+    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
+    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    monkeypatch.setattr(cli_module, "AppleScriptMail", lambda: StubMail(headers={}))
+    runner = CliRunner()
+    assert runner.invoke(cli, ["learn", "--no-drift"]).exit_code == 0
+    assert runner.invoke(
+        cli, ["rules", "--never-personal", "person@work.example"]
+    ).exit_code == 0
+
+    result = runner.invoke(cli, ["triage", "--dry-run"])
+    assert result.exit_code == 0
+    assert "0 of 1 would be filed" in result.output
+    assert "you flagged this" in result.output
