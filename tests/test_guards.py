@@ -44,6 +44,45 @@ def test_separated_do_not_reply_variants_are_bulk():
     assert is_bulk("do.not.reply@service.example", None) is True
 
 
+def test_opaque_token_local_part_is_bulk_without_needing_headers():
+    """A machine-minted local part is nobody's address.
+
+    Live evidence, 9 August 2026: a marketplace's despatch and delivery
+    notices arrive from a per-subscriber token address carrying no
+    List-Unsubscribe, no Precedence and no Auto-Submitted — no bulk signal of
+    any kind — so the guard held them back as though a person had written
+    them, and they sat in the inbox indefinitely. Nobody is called
+    a1b2c3d4e5f60718.
+    """
+    assert is_bulk("a1b2c3d4e5f60718@members.shop.example", None) is True
+    assert is_bulk("Shop <a1b2c3d4e5f60718@members.shop.example>", None) is True
+
+
+def test_consonant_run_local_part_is_bulk():
+    """The other shape a generated mailbox takes: long, and unpronounceable."""
+    assert is_bulk("bqxzhtrmvkwjnp@mailer.example", None) is True
+
+
+def test_real_names_and_words_are_never_read_as_opaque():
+    """The false positive that would matter: filing a person's mail away.
+
+    Everything here is longer than a short address and must stay personal —
+    a run-together human name, a hyphenated one, and ordinary role
+    addresses, including the short hex-looking words a name can spell.
+    """
+    for sender in (
+        "elizabeth.warrington@work.example",
+        "christopher-mccarthy@work.example",
+        "elizabethbennet@work.example",
+        "accountsreceivable@supplier.example",
+        "ada@work.example",
+        "deb@work.example",          # entirely hex letters, but short
+        "decaf@work.example",        # ditto
+        "j.r.hartley@work.example",
+    ):
+        assert is_bulk(sender, None) is False, sender
+
+
 def test_list_unsubscribe_header_marks_bulk():
     assert is_bulk("newsletter@shop.example", {"List-Unsubscribe": "<mailto:x@shop.example>"}) is True
 
