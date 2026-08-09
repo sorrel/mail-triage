@@ -47,6 +47,14 @@ class Source:
     inbox: str = "INBOX"
     trash: str = "Deleted Messages"
     ignore: list[str] = field(default_factory=list)
+    # Where a message goes when it must be taken *out of this inbox* but not
+    # binned. Only Gmail needs it, and needs it badly: its inbox is a label,
+    # so a cross-account move copies the message and leaves the label alone —
+    # the mail is filed and still sitting in the inbox, and the next run files
+    # it again. Moving the leftover to "[Gmail]/All Mail" is Gmail's own word
+    # for archiving, which is what clears the label. Unset means the account
+    # does not need it, and nothing extra is attempted.
+    archive: str | None = None
 
 
 @dataclass(frozen=True)

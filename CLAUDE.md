@@ -172,6 +172,18 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   header names on one message concluded "no signal available"; dumping every
   header across all 14 messages found `Feedback-Id` and then disproved it. The
   second run is what made the difference, and it cost one AppleScript loop.
+- **A move that reports success is not a message that left the inbox.**
+  A Gmail inbox is a label, so a cross-account move copies the message to the
+  filing account and leaves the label untouched. Mail returns happily, the
+  journal records "moved", and the message is still in the inbox to be filed
+  again next run — with a fresh copy landing each time. Measured on 9 August
+  2026: four attempts on one newsletter, three copies in the destination, the
+  original in the Gmail inbox throughout. `execute` now verifies with
+  `message_exists` after every move, clears the label by moving the leftover
+  to the source's `archive` (`[Gmail]/All Mail`), verifies again, and reports
+  a failure when it cannot. Note the shape — it is the same defect as the
+  unsubscribe that reported "sent" and bounced: the success was reported by
+  the thing that wanted to succeed, and nobody asked the mailbox.
 - **Binding to 127.0.0.1 does not stop a web page from reaching the server.**
   DNS rebinding resolves an attacker's hostname to 127.0.0.1, and their page is
   then same-origin with ours. The strict `Host` check in `web/security.py` is
