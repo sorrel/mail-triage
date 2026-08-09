@@ -229,7 +229,7 @@ as the plan assumes.
 **Do:** correct the fixtures in Tasks 4 and 6 to
 
 ```python
-FakeMail(inbox=[1], mailboxes=["Home/Orders", "Home/Keep"], keys={1: "<a@b>"})
+FakeMail(inbox=[1], mailboxes=["Filed/Orders", "Filed/Keep"], keys={1: "<a@b>"})
 ```
 
 ---

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -47,6 +48,9 @@ from mail_triage.unsubscribe import (
     SelectionError, find_candidates, folder_url, parse_selection, render_candidates,
     send_unsubscribe,
 )
+from mail_triage.web.routes import Router
+from mail_triage.web.server import serve
+from mail_triage.web.session import Session
 
 
 # How many drift entries the `learn` report lists before summarising the rest.
@@ -931,6 +935,91 @@ def runs() -> None:
         moved = sum(1 for entry in entries if entry.status == "moved")
         undone = sum(1 for entry in entries if entry.status == "undone")
         click.echo(f"{run_id}  {moved} moved, {undone} undone")
+
+
+def _unsubscribe_candidates(config, mail):
+    """The ranked candidates, read from a fresh snapshot on demand.
+
+    Deliberately lazy: this costs one AppleScript round trip per candidate,
+    so it happens when the panel is opened rather than on every page load.
+    """
+    with tempfile.TemporaryDirectory() as work:
+        reader = EnvelopeReader(snapshot_database(DEFAULT_DB_PATH, Path(work)))
+        try:
+            return find_candidates(reader, config, mail)
+        finally:
+            reader.close()
+
+
+@cli.command()
+@click.option("--port", default=8765, help="Port to listen on. Loopback only.")
+@click.option(
+    "--open/--no-open", "open_browser", default=True,
+    help="Open your browser. --no-open prints the URL instead.",
+)
+@click.option(
+    "--source", "source_names", multiple=True,
+    help="Triage only these sources, by name. Repeatable. Default: all of them.",
+)
+def web(port: int, open_browser: bool, source_names: tuple[str, ...]) -> None:
+    """Triage in a browser, on 127.0.0.1 only.
+
+    Runs one triage pass — same snapshot, same classifier, same guards as the
+    terminal — and serves the proposals to a page you click through. Nothing
+    moves until you press Apply, and everything that moves is journalled and
+    undoable exactly as a terminal run is.
+
+    The server is reachable only from this machine. The URL carries a
+    one-time token; the page trades it for a header token and drops it from
+    the address bar. The server stops on Ctrl-C, or after 30 minutes idle.
+    """
+    config = load_config()
+    sources = _select_sources(config, source_names)
+    model = load_model(config.model_path)
+    try:
+        rules = load_rules(config.rules_path)
+    except RulesError as error:
+        raise click.ClickException(str(error)) from error
+    try:
+        never_personal = load_never_personal(config.never_personal_path)
+    except NeverPersonalError as error:
+        raise click.ClickException(str(error)) from error
+    try:
+        inputs = gather(config, sources, False, DEFAULT_DB_PATH)
+    except InputError as error:
+        raise click.ClickException(str(error)) from error
+
+    mail = AppleScriptMail()
+    guard, guard_state = _make_header_guard(mail)
+    classifier = Classifier(
+        model, config, inputs.folders, guard=guard,
+        deletion_index=inputs.deletion_index, rules=rules,
+        attachments=inputs.attachments, never_personal=never_personal,
+    )
+    proposals = [classifier.classify(message) for message in inputs.messages]
+    if guard_state["fetches"]:
+        click.echo("\r" + " " * PROGRESS_LINE_WIDTH + "\r", nl=False, err=True)
+
+    router = Router(
+        session=Session(proposals),
+        config=config,
+        mail=mail,
+        accounts={source.prefix: source.name for source in sources},
+        static_dir=Path(__file__).parent / "web" / "static",
+        token=secrets.token_urlsafe(32),
+        port=port,
+        unsubscribe_source=lambda: _unsubscribe_candidates(config, mail),
+    )
+
+    def ready(url: str, actual_port: int) -> None:
+        click.echo(f"Serving {len(proposals)} messages on http://127.0.0.1:{actual_port}")
+        if open_browser:
+            click.echo("Opening your browser…   (ctrl-C to stop)")
+        else:
+            click.echo(f"Open this yourself (the token works once):\n  {url}")
+
+    serve(router, port=port, open_browser=open_browser, on_ready=ready)
+    click.echo("Stopped.")
 
 
 if __name__ == "__main__":
