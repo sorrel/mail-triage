@@ -568,12 +568,20 @@ class FakeMail:
             message_id = matches[0]
         elif message_id not in source_contents:
             raise MessageNotFoundError(f"Message {message_id} not in '{source_folder}'")
-        # A Gmail inbox is a label, not a mailbox, and a cross-account move
+        # A Gmail inbox is a label, not a mailbox, and a *cross-account* move
         # out of one copies the message without clearing the label — so the
         # original stays put whilst the move reports success. Measured on a
         # live mailbox, 9 August 2026: three attempts, three copies in the
         # destination, and the message still in the Gmail inbox each time.
-        if not self.leaves_original:
+        #
+        # Scoped to cross-account deliberately, because that is where the
+        # real boundary lies: a move *within* the account does clear the
+        # label, which is exactly what makes the archive step work. Proved
+        # against live Gmail on 9 August 2026 — INBOX -> [Gmail]/All Mail
+        # left the message in All Mail and gone from the inbox. A fake that
+        # left the original on every move could only ever test the failure.
+        crossing = (source_account or account) != account
+        if not (self.leaves_original and crossing):
             source_contents.remove(message_id)
         self._contents(account, folder).append(message_id)
         self.moved.append((message_id, folder, account, source_folder))
