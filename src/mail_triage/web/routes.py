@@ -37,6 +37,7 @@ from mail_triage.web.security import (
     Response,
     TokenGate,
     check_request,
+    session_cookie,
 )
 from mail_triage.web.session import Session
 
@@ -187,15 +188,17 @@ class Router:
         if root not in target.parents or not target.is_file():
             return Response.json({"error": "no such file"}, status=404)
         body = target.read_bytes()
+        headers = dict(SECURITY_HEADERS)
         if target.name == "index.html":
             # The page needs the token to call the API, and it cannot be given
             # one in a header. Substituted on the way out so the file on disk
             # never holds a live secret.
             body = body.replace(TOKEN_PLACEHOLDER.encode(), self.token.encode())
+            # And a session cookie, so a refresh still works once the one-time
+            # URL token has been spent.
+            headers["Set-Cookie"] = session_cookie(self.token)
         content_type, _ = mimetypes.guess_type(target.name)
-        return Response(
-            200, body, content_type or "application/octet-stream", dict(SECURITY_HEADERS)
-        )
+        return Response(200, body, content_type or "application/octet-stream", headers)
 
 
 def _body(request: Request) -> dict | None:

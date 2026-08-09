@@ -307,3 +307,28 @@ def test_a_static_file_carries_the_security_headers(tmp_path):
     assert response.status == 200
     assert response.extra_headers["Referrer-Policy"] == "no-referrer"
     assert "frame-src https:" in response.extra_headers["Content-Security-Policy"]
+
+
+def test_the_page_sets_a_session_cookie_so_a_refresh_still_works(tmp_path):
+    router, _ = build(tmp_path)
+    (tmp_path / "static" / "index.html").write_text("<h1>Triage</h1>")
+    response = router.handle(Request(
+        method="GET", path="/", query={"k": TOKEN},
+        headers={"Host": f"127.0.0.1:{PORT}"}, body=b"",
+    ))
+    assert response.status == 200
+    assert response.extra_headers["Set-Cookie"].startswith(f"mail_triage_session={TOKEN};")
+
+    refreshed = router.handle(Request(
+        method="GET", path="/", query={},
+        headers={"Host": f"127.0.0.1:{PORT}", "Cookie": f"mail_triage_session={TOKEN}"},
+        body=b"",
+    ))
+    assert refreshed.status == 200
+
+
+def test_a_stylesheet_does_not_set_a_cookie(tmp_path):
+    router, _ = build(tmp_path)
+    (tmp_path / "static" / "app.css").write_text("body { margin: 0 }")
+    response = router.handle(api("/app.css"))
+    assert "Set-Cookie" not in response.extra_headers

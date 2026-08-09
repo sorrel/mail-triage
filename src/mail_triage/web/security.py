@@ -109,6 +109,32 @@ class TokenGate:
         return True
 
 
+SESSION_COOKIE = "mail_triage_session"
+
+
+def session_cookie(token: str) -> str:
+    """The page's session cookie.
+
+    ``HttpOnly`` so no script can read it back out — the page gets its token
+    from the meta tag instead. ``SameSite=Strict`` so it is never sent on a
+    navigation that began anywhere else. No ``Secure``: this is plain http on
+    loopback by design, and marking it Secure would stop it being set at all.
+    """
+    return (
+        f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict"
+    )
+
+
+def _cookie(request: Request, name: str) -> str | None:
+    """One cookie's value from the request's ``Cookie`` header."""
+    raw = request.header("Cookie") or ""
+    for part in raw.split(";"):
+        key, _, value = part.strip().partition("=")
+        if key == name:
+            return value
+    return None
+
+
 def _forbidden(why: str) -> Response:
     return Response.json({"error": why}, status=403)
 
@@ -140,6 +166,17 @@ def check_request(request: Request, gate: TokenGate, port: int) -> Response | No
         # The page is opened from a typed or launched URL, which cannot carry
         # a header — so it presents the token in the query, once. Everything
         # else is fetched by our own script, which can set the header.
+        #
+        # The cookie is what makes a refresh work. Once the URL token has been
+        # spent the address bar holds a bare "/", so without this every ⌘R
+        # answers a JSON error instead of the page — which is exactly what
+        # happened the first time this was used in anger.
+        #
+        # It authorises the *page* and nothing else. Every /api/ request still
+        # needs the header token, which no cross-origin page can read out of
+        # our HTML, so a cookie existing does not reopen CSRF.
+        if gate.matches(_cookie(request, SESSION_COOKIE)):
+            return None
         if not gate.spend_url_token(request.query.get("k")):
             return _forbidden("bad, missing or already-used token")
         return None

@@ -132,3 +132,43 @@ def test_the_policy_allows_framing_https_only_and_forbids_inline_script():
     assert "'unsafe-inline'" not in CSP
     assert "object-src 'none'" in CSP
     assert "form-action 'none'" in CSP
+
+
+def test_a_refresh_works_once_the_url_token_has_been_spent():
+    """The bug this exists for: the page drops the token from the address
+    bar, so after the first load a refresh asks for a bare "/". Without the
+    session cookie that answers 403 with a JSON blob instead of the page."""
+    one_gate = gate()
+    assert check_request(page(query={"k": TOKEN}), one_gate, PORT) is None
+    refreshed = page(headers={"Cookie": f"mail_triage_session={TOKEN}"})
+    assert check_request(refreshed, one_gate, PORT) is None
+
+
+def test_a_forged_session_cookie_is_refused():
+    refreshed = page(headers={"Cookie": "mail_triage_session=guess"})
+    assert check_request(refreshed, gate(), PORT).status == 403
+
+
+def test_the_cookie_does_not_authorise_the_api():
+    """CSRF stays dead: a cookie is sent automatically, so it must never be
+    enough to move mail. Only the header token, which no other origin can
+    read out of our HTML, authorises an API call."""
+    with_cookie = Request(
+        method="POST", path="/api/decisions", query={},
+        headers={"Host": f"127.0.0.1:{PORT}", "Cookie": f"mail_triage_session={TOKEN}"},
+        body=b"{}",
+    )
+    assert check_request(with_cookie, gate(), PORT).status == 403
+
+
+def test_the_cookie_is_httponly_and_samesite_strict():
+    from mail_triage.web.security import session_cookie
+    value = session_cookie(TOKEN)
+    assert "HttpOnly" in value
+    assert "SameSite=Strict" in value
+    assert value.startswith(f"mail_triage_session={TOKEN};")
+
+
+def test_one_cookie_is_found_among_several():
+    request = page(headers={"Cookie": f"other=1; mail_triage_session={TOKEN}; third=3"})
+    assert check_request(request, gate(), PORT) is None

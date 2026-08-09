@@ -134,6 +134,9 @@ function tally() {
   if (chosen.size) parts.push(`${chosen.size} chosen`);
   if (held) parts.push(`${held} held back`);
   document.getElementById("tally").textContent = parts.join(" · ");
+  // Nothing chosen means Apply would do nothing; saying so beats a button
+  // that looks live and silently does nothing when pressed.
+  document.getElementById("apply").disabled = chosen.size === 0;
 }
 
 async function load() {
@@ -147,6 +150,27 @@ async function load() {
       main.append(el("p", "empty", "Nothing to triage. Your inbox is clear."));
       document.getElementById("tally").textContent = "";
       return;
+    }
+    // Every message held is a perfectly ordinary outcome, and the first time
+    // it happened the page showed rows with no buttons and said nothing about
+    // why — which reads as broken rather than as finished.
+    if (proposals.every((proposal) => proposal.veto)) {
+      const note = el("p", "empty");
+      note.append(
+        document.createTextNode(
+          "Nothing to file. Every message below was held back deliberately — "
+        )
+      );
+      note.append(el("strong", null, "the reason is beside each one"));
+      note.append(
+        document.createTextNode(
+          ". A held message cannot be filed from here; deal with it in Mail, "
+        )
+      );
+      note.append(
+        document.createTextNode("or try Mailing lists to leave what keeps arriving.")
+      );
+      main.append(note);
     }
     const groups = new Map();
     for (const proposal of proposals) {
