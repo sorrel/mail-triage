@@ -249,3 +249,23 @@ def test_the_shortcuts_are_written_down_on_the_page():
     assert 'class="legend"' in markup
     for key in ("<kbd>f</kbd>", "<kbd>b</kbd>", "<kbd>s</kbd>", "<kbd>→</kbd>"):
         assert key in markup, key
+
+
+def test_the_confirmation_can_be_answered_without_a_mouse():
+    """The page's own shortcuts stop at an open dialog, which left this box
+    with nothing but Tab and Escape — an interruption to a keyboard flow
+    rather than part of one."""
+    source = read("app.js")
+    markup = read("index.html")
+    assert 'getElementById("confirm").addEventListener("keydown"' in source
+    assert '["arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)' in source
+    assert 'key === "l" || key === "n"' in source
+    assert 'key === "f" || key === "y"' in source
+    # And the letters are shown, not folklore.
+    assert "Leave it <kbd>L</kbd>" in markup
+    assert "File it <kbd>F</kbd>" in markup
+
+
+def test_the_confirmation_arrows_land_on_the_safe_answer_first():
+    """From nowhere in particular, leftmost is "Leave it"."""
+    assert "const next = at < 0 ? 0 :" in read("app.js")

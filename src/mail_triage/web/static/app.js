@@ -306,6 +306,39 @@ document.getElementById("confirm-yes").addEventListener("click", () => {
   document.getElementById("confirm").close("yes");
 });
 
+/* The page's own shortcuts stop at an open dialog — otherwise j and f would
+ * be doing things to the list behind it. That left this box with nothing but
+ * Tab and Escape, which is not a keyboard flow, it is an interruption to one.
+ * So it gets its own: arrows to choose, the initial letter of either answer,
+ * Return to confirm the one in focus, Escape to leave the mail alone. */
+document.getElementById("confirm").addEventListener("keydown", (event) => {
+  const dialog = document.getElementById("confirm");
+  const buttons = [
+    document.getElementById("confirm-no"),
+    document.getElementById("confirm-yes"),
+  ];
+  const key = event.key.toLowerCase();
+
+  if (["arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) {
+    event.preventDefault();
+    const at = buttons.indexOf(document.activeElement);
+    const forward = key === "arrowright" || key === "arrowdown";
+    // From nowhere in particular, land on the safe answer first.
+    const next = at < 0 ? 0 : (at + (forward ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next].focus();
+    return;
+  }
+  // "l" and "f" are the initials shown on the buttons; "n" and "y" because
+  // the question reads as a yes-or-no one and fingers go there.
+  if (key === "l" || key === "n") {
+    event.preventDefault();
+    dialog.close("no");
+  } else if (key === "f" || key === "y") {
+    event.preventDefault();
+    dialog.close("yes");
+  }
+});
+
 function choose(id, action, article, override = false, folder = null) {
   chosen.set(id, { action, override, folder });
   article.dataset.chosen = action;
