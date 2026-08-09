@@ -172,3 +172,48 @@ def test_the_cookie_is_httponly_and_samesite_strict():
 def test_one_cookie_is_found_among_several():
     request = page(headers={"Cookie": f"other=1; mail_triage_session={TOKEN}; third=3"})
     assert check_request(request, gate(), PORT) is None
+
+
+# --- what a browser can and cannot send --------------------------------------
+#
+# The miss that produced an unstyled page stuck on "Reading your inbox…": the
+# route tests all used a helper that set X-Mail-Triage-Token, a header no
+# browser will ever put on a <link> or a <script>. These ask the way a browser
+# actually asks.
+
+def asset(path, headers=None):
+    """A subresource request: cookie only, no custom header, as a browser."""
+    base = {"Host": f"127.0.0.1:{PORT}", "Sec-Fetch-Site": "same-origin"}
+    base.update(headers or {})
+    return Request(method="GET", path=path, query={}, headers=base, body=b"")
+
+
+def test_the_stylesheet_and_script_load_with_only_a_cookie():
+    for path in ("/app.css", "/app.js"):
+        request = asset(path, {"Cookie": f"mail_triage_session={TOKEN}"})
+        assert check_request(request, gate(), PORT) is None, path
+
+
+def test_an_asset_without_the_cookie_is_still_refused():
+    assert check_request(asset("/app.css"), gate(), PORT).status == 403
+
+
+def test_an_asset_never_needs_the_header_a_browser_cannot_set():
+    """The regression guard: if this ever requires a header again, the page
+    renders unstyled and does nothing, with no error anywhere obvious."""
+    request = asset("/app.css", {"Cookie": f"mail_triage_session={TOKEN}"})
+    assert request.header("X-Mail-Triage-Token") is None
+    assert check_request(request, gate(), PORT) is None
+
+
+def test_the_api_still_refuses_the_cookie_alone_after_that_loosening():
+    request = Request(
+        method="POST", path="/api/decisions", query={},
+        headers={
+            "Host": f"127.0.0.1:{PORT}",
+            "Cookie": f"mail_triage_session={TOKEN}",
+            "Sec-Fetch-Site": "same-origin",
+        },
+        body=b"{}",
+    )
+    assert check_request(request, gate(), PORT).status == 403

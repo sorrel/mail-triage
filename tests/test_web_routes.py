@@ -292,18 +292,30 @@ def test_the_served_page_carries_the_token_and_the_file_on_disk_does_not(tmp_pat
     assert (tmp_path / "static" / "index.html").read_text() == '<meta content="__TOKEN__">'
 
 
+def asset(path):
+    """A subresource request as a *browser* makes it: cookie, no custom
+    header. A browser cannot put one on a <link> or a <script>."""
+    return Request(
+        method="GET", path=path, query={},
+        headers={
+            "Host": f"127.0.0.1:{PORT}",
+            "Cookie": f"mail_triage_session={TOKEN}",
+        },
+        body=b"",
+    )
+
+
 def test_a_path_climbing_out_of_the_static_directory_is_refused(tmp_path):
     router, _ = build(tmp_path)
-    secret = tmp_path / "secret.txt"
-    secret.write_text("not for you")
+    (tmp_path / "secret.txt").write_text("not for you")
     for path in ("/../secret.txt", "/../../secret.txt", "//../secret.txt"):
-        assert router.handle(api(path)).status == 404
+        assert router.handle(asset(path)).status == 404, path
 
 
 def test_a_static_file_carries_the_security_headers(tmp_path):
     router, _ = build(tmp_path)
     (tmp_path / "static" / "app.css").write_text("body { margin: 0 }")
-    response = router.handle(api("/app.css"))
+    response = router.handle(asset("/app.css"))
     assert response.status == 200
     assert response.extra_headers["Referrer-Policy"] == "no-referrer"
     assert "frame-src https:" in response.extra_headers["Content-Security-Policy"]

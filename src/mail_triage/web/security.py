@@ -152,35 +152,37 @@ def check_request(request: Request, gate: TokenGate, port: int) -> Response | No
     }:
         return _forbidden("cross-origin request")
 
-    is_page = request.path == "/"
+    # The split that matters: an /api/ call *acts*, and is made by our own
+    # script, which can set a header. Everything else is a document or an
+    # asset, fetched by the browser itself — and a browser cannot put a custom
+    # header on a <link>, a <script> or an address-bar navigation. Requiring
+    # one there refused the page its own stylesheet and script, which is
+    # precisely what happened: the interface rendered unstyled and stuck on
+    # "Reading your inbox…".
+    is_api = request.path.startswith("/api/")
+
     fetch_site = request.header("Sec-Fetch-Site")
     if fetch_site is not None:
-        allowed = {"same-origin", "none"} if is_page else {"same-origin"}
+        # "none" means a top-level, user-initiated navigation: right for a
+        # document, and never right for an API call.
+        allowed = {"same-origin"} if is_api else {"same-origin", "none"}
         if fetch_site.casefold() not in allowed:
-            # "none" means a top-level, user-initiated navigation. That is
-            # right for the page and wrong for the API, where no legitimate
-            # call is ever one.
             return _forbidden("cross-site request")
 
-    if is_page:
-        # The page is opened from a typed or launched URL, which cannot carry
-        # a header — so it presents the token in the query, once. Everything
-        # else is fetched by our own script, which can set the header.
-        #
-        # The cookie is what makes a refresh work. Once the URL token has been
-        # spent the address bar holds a bare "/", so without this every ⌘R
-        # answers a JSON error instead of the page — which is exactly what
-        # happened the first time this was used in anger.
-        #
-        # It authorises the *page* and nothing else. Every /api/ request still
-        # needs the header token, which no cross-origin page can read out of
-        # our HTML, so a cookie existing does not reopen CSRF.
-        if gate.matches(_cookie(request, SESSION_COOKIE)):
-            return None
-        if not gate.spend_url_token(request.query.get("k")):
-            return _forbidden("bad, missing or already-used token")
+    if is_api:
+        # The header token, and only the header token. A cookie rides along
+        # automatically on any request a browser can be tricked into making,
+        # so it must never be enough to move mail. This is what keeps CSRF
+        # closed now that a cookie exists at all.
+        if not gate.matches(request.header("X-Mail-Triage-Token")):
+            return _forbidden("bad or missing token")
         return None
 
-    if not gate.matches(request.header("X-Mail-Triage-Token")):
-        return _forbidden("bad or missing token")
-    return None
+    # The cookie is what makes a refresh — and every asset — work. Once the
+    # URL token has been spent the address bar holds a bare "/", so without
+    # this a ⌘R answers a JSON error instead of the page.
+    if gate.matches(_cookie(request, SESSION_COOKIE)):
+        return None
+    if request.path == "/" and gate.spend_url_token(request.query.get("k")):
+        return None
+    return _forbidden("bad, missing or already-used token")
