@@ -44,6 +44,7 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `model/tokens.py` | Stage B: naive Bayes over subject tokens |
 | `model/classify.py` | Stage orchestration, guards, precedence |
 | `guards.py` | Do-not-file: flagged, or may need a reply |
+| `never_personal.py` | Senders vouched for as never awaiting a reply |
 | `invoices.py` | Bill detection |
 | `rules.py` | Hard per-sender rules |
 | `corrections.py` | Folders typed over a proposal, weighted 10× in training |
@@ -147,6 +148,25 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   tried live and changed nothing — the draft is already on the server by
   then. Deleting it afterwards means matching a stored message on subject
   and recipient, which is not a guess worth making.
+- **`Feedback-Id` does not mean bulk, and betting the reply guard on it
+  would file away the mail that most wants an answer.** Transactional mail is
+  the case the guard has no signal for: an order confirmation is not a
+  newsletter, so it carries no `List-Unsubscribe`, and plenty of senders set
+  neither `Precedence` nor `Auto-Submitted`. `Feedback-Id` — the ESP
+  feedback-loop header — looks like the perfect general fix, and on a survey
+  of the live inbox (9 August 2026) it caught every order confirmation. It
+  also sat on a heating firm's personal chase about a heat pump enquiry, sent
+  through their CRM: addressed to the user directly, plainly wanting a reply,
+  and indistinguishable in the envelope. The difference between "your order is
+  confirmed" and "we have been trying to reach you" is in the meaning, not the
+  headers. Hence `never_personal.py`: where the message carries no evidence,
+  the evidence has to come from the user, and it lifts the reply guard *only*
+  — flagging still wins above it. The failure mode this avoids is the quiet
+  one: the tests stay green and the heat pump enquiry is simply gone.
+- **A survey beats a grep when deciding what a header means.** Checking three
+  header names on one message concluded "no signal available"; dumping every
+  header across all 14 messages found `Feedback-Id` and then disproved it. The
+  second run is what made the difference, and it cost one AppleScript loop.
 - **In TOML, every top-level key must precede the first `[[source]]` table.**
   Anything after one is parsed as part of it. This broke the first draft of
   `config.example.toml`; `load_config` now says so by name when it happens.

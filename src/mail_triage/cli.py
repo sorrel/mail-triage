@@ -25,6 +25,12 @@ from mail_triage.model.store import load_model, save_model, train_from_history
 from mail_triage.review import (
     auto_decisions, render_table, review, review_held, review_unplaced, summarise,
 )
+from mail_triage.never_personal import (
+    NeverPersonalError,
+    declare_never_personal,
+    load_never_personal,
+)
+from mail_triage.never_personal import forget_never_personal as forget_never_personal_sender
 from mail_triage.rules import RulesError, forget_rule, load_rules
 from mail_triage.sends import (
     SentRequest,
@@ -340,9 +346,44 @@ def _ask_about_uncertain_senders(
 
 @cli.command()
 @click.option("--forget", default=None, metavar="SENDER", help="Remove one sender's rule.")
-def rules(forget: str | None) -> None:
+@click.option(
+    "--never-personal",
+    default=None,
+    metavar="SENDER",
+    help="Vouch that this sender never awaits a reply, so the reply guard "
+    "stops holding their mail back. Flagging still wins.",
+)
+@click.option(
+    "--forget-never-personal",
+    default=None,
+    metavar="SENDER",
+    help="Withdraw a --never-personal declaration.",
+)
+def rules(forget: str | None, never_personal: str | None, forget_never_personal: str | None) -> None:
     """List the answers you have given about where senders' mail goes."""
     config = load_config()
+    if never_personal is not None:
+        try:
+            changed = declare_never_personal(config.never_personal_path, never_personal)
+        except NeverPersonalError as error:
+            raise click.ClickException(str(error)) from error
+        click.echo(
+            f"{never_personal} will no longer be held back for a reply."
+            if changed
+            else f"{never_personal} was already declared never-personal."
+        )
+        return
+    if forget_never_personal is not None:
+        try:
+            removed = forget_never_personal_sender(
+                config.never_personal_path, forget_never_personal
+            )
+        except NeverPersonalError as error:
+            raise click.ClickException(str(error)) from error
+        if not removed:
+            raise click.ClickException(f"{forget_never_personal} was not declared never-personal.")
+        click.echo(f"{forget_never_personal} may be held back for a reply again.")
+        return
     if forget is not None:
         if not forget_rule(config.rules_path, forget):
             raise click.ClickException(f"No rule for {forget}.")
@@ -350,15 +391,26 @@ def rules(forget: str | None) -> None:
         return
     try:
         known = load_rules(config.rules_path)
-    except RulesError as error:
+        vouched = load_never_personal(config.never_personal_path)
+    except (RulesError, NeverPersonalError) as error:
         raise click.ClickException(str(error)) from error
-    if not known:
+    if not known and not vouched:
         click.echo("No rules yet. 'mail-triage triage' will ask about uncertain senders.")
         return
     for sender, rule in sorted(known.items()):
         target = {"file": rule.folder, "bin": "(delete)"}.get(rule.action, "(left alone)")
         click.echo(f"{sender:<44}{target}")
-    click.echo(f"\n{len(known)} rules. Remove one with: mail-triage rules --forget <sender>")
+    if known:
+        click.echo(f"\n{len(known)} rules. Remove one with: mail-triage rules --forget <sender>")
+    if vouched:
+        # Listed apart because it answers a different question: not where the
+        # mail goes, but whether it might be waiting on a reply.
+        click.echo("\nNever personal — not held back for a reply:")
+        for sender in sorted(vouched):
+            click.echo(f"  {sender}")
+        click.echo(
+            "\nWithdraw one with: mail-triage rules --forget-never-personal <sender>"
+        )
 
 
 @cli.command()
@@ -427,6 +479,10 @@ def triage(
     except RulesError as error:
         raise click.ClickException(str(error)) from error
     try:
+        never_personal = load_never_personal(config.never_personal_path)
+    except NeverPersonalError as error:
+        raise click.ClickException(str(error)) from error
+    try:
         inputs = gather(config, sources, ask, DEFAULT_DB_PATH)
     except InputError as error:
         raise click.ClickException(str(error)) from error
@@ -438,7 +494,7 @@ def triage(
         classifier = Classifier(
             model, config, folders, guard=guard,
             deletion_index=inputs.deletion_index, rules=current_rules,
-            attachments=inputs.attachments,
+            attachments=inputs.attachments, never_personal=never_personal,
         )
         return [classifier.classify(message) for message in inputs.messages]
 

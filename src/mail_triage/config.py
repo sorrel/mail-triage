@@ -145,6 +145,16 @@ class Config:
         return self.local_dir / "rules.json"
 
     @property
+    def never_personal_path(self) -> Path:
+        """Senders vouched for as never awaiting a reply.
+
+        Separate from ``rules.json``, which is keyed by sender and answers
+        "where does this go?". This answers a different question — "could a
+        person be writing to me?" — and lifts only the reply guard.
+        """
+        return self.local_dir / "never-personal.json"
+
+    @property
     def journal_dir(self) -> Path:
         return self.local_dir / "journal"
 

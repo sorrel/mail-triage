@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mail_triage.corpus import normalise_sender
 from mail_triage.envelope import MessageRow
 
 # Strong enough on their own to call a sender bulk without fetching headers —
@@ -205,8 +206,17 @@ def is_bulk(sender: str, headers: dict[str, str] | None) -> bool:
     return _headers_say_automated(headers)
 
 
-def needs_attention(message: MessageRow, headers: dict[str, str] | None) -> Veto | None:
+def needs_attention(
+    message: MessageRow,
+    headers: dict[str, str] | None,
+    never_personal: frozenset[str] = frozenset(),
+) -> Veto | None:
     """Decide whether ``message`` must stay in the inbox regardless of confidence.
+
+    ``never_personal`` is the set of addresses the user has vouched for as
+    never person-to-person — evidence the message itself does not carry. It
+    lifts this guard alone: flagging still wins above it, and every other
+    veto is decided elsewhere.
 
     ``headers`` is the message's raw headers, or ``None`` if they were never
     fetched (a no-reply sender made the fetch unnecessary) or could not be
@@ -221,6 +231,11 @@ def needs_attention(message: MessageRow, headers: dict[str, str] | None) -> Veto
     """
     if message.flagged:
         return Veto("you flagged this")
+    if normalise_sender(message.sender) in never_personal:
+        # The user has said this address never awaits a reply. Checked after
+        # flagging, which stays absolute, and before every header-derived
+        # signal, since a declaration settles the question on its own.
+        return None
     if is_bulk(message.sender, headers):
         return None
     if headers is None:

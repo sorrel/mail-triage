@@ -121,6 +121,69 @@ def test_ordinary_address_without_list_unsubscribe_is_not_bulk():
     assert is_bulk("someone@work.example", {"Subject": "hello"}) is False
 
 
+# --- never-personal senders -------------------------------------------------
+
+def test_never_personal_sender_is_not_vetoed():
+    """A sender you have vouched for is not held for a reply.
+
+    The case this exists for, 9 August 2026: a marketplace sends order
+    confirmations from an ordinary-word address with no List-Unsubscribe, no
+    Precedence and no Auto-Submitted. Nothing in the message says "bulk", so
+    only the user can say it.
+    """
+    veto = needs_attention(
+        message(sender="Shop <orders@shop.example>"),
+        headers={"Subject": "Order confirmed"},
+        never_personal=frozenset({"orders@shop.example"}),
+    )
+    assert veto is None
+
+
+def test_never_personal_matches_the_address_not_the_display_name():
+    """The message's display name must not defeat the match.
+
+    The declared set arrives already lower-cased from
+    ``never_personal.load_never_personal``; what varies per message is the
+    "Name <address>" form the sender chooses to send under.
+    """
+    veto = needs_attention(
+        message(sender="Shop Orders <Orders@Shop.Example>"),
+        headers={"Subject": "hi"},
+        never_personal=frozenset({"orders@shop.example"}),
+    )
+    assert veto is None
+
+
+def test_never_personal_does_not_touch_other_senders():
+    veto = needs_attention(
+        message(sender="someone@work.example"),
+        headers={"Subject": "hi"},
+        never_personal=frozenset({"orders@shop.example"}),
+    )
+    assert isinstance(veto, Veto)
+
+
+def test_flagged_still_beats_a_never_personal_declaration():
+    """Flagging is the one absolute. Declaring a sender bulk must not undo it."""
+    veto = needs_attention(
+        message(sender="orders@shop.example", flagged=True),
+        headers=None,
+        never_personal=frozenset({"orders@shop.example"}),
+    )
+    assert isinstance(veto, Veto)
+    assert "flagged" in veto.reason
+
+
+def test_never_personal_works_without_headers():
+    """The declaration is evidence in itself — no header fetch required."""
+    veto = needs_attention(
+        message(sender="orders@shop.example"),
+        headers=None,
+        never_personal=frozenset({"orders@shop.example"}),
+    )
+    assert veto is None
+
+
 # --- needs_attention --------------------------------------------------------
 
 def test_flagged_message_is_vetoed():
