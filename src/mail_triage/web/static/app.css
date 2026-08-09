@@ -199,41 +199,87 @@ main { max-width: var(--measure); margin: 0 auto; }
 }
 
 .row:hover .row-actions,
+.row:focus .row-actions,
 .row:focus-within .row-actions { opacity: 1; }
 
 /* A row with a choice made keeps its controls visible — hiding them again
  * makes the page look like it forgot. */
 .row[data-chosen] .row-actions { opacity: 1; }
 
-select.folders {
+/* --- the folder box ------------------------------------------------------ */
+
+.picker { position: relative; display: inline-block; }
+
+.folder-input {
   font: inherit;
   font-size: 0.8125rem;
-  padding: 0.35rem 0.5rem;
+  padding: 0.4rem 0.6rem;
+  width: 20rem;
+  max-width: 60vw;
   color: var(--ink);
   background: transparent;
   border: 1px solid var(--rule);
   border-radius: 2px;
-  max-width: 18rem;
 }
+
+.folder-input::placeholder { color: var(--ink-soft); }
+.folder-input:focus-visible { outline: 2px solid var(--file); outline-offset: 2px; }
+
+.matches {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 2px);
+  left: 0;
+  width: 24rem;
+  max-width: 80vw;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.12);
+}
+
+.match {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.match[data-active] { background: var(--tint); color: var(--file); }
 
 /* --- applying, made visible ---------------------------------------------- */
 
 .row[data-acting] { background: var(--tint); }
-.row[data-done] .state { opacity: 1; }
 
+/* Filed mail leaves slowly and visibly: it fades, drifts, and the gap it
+ * left closes up. Fast enough not to be a wait, slow enough to be watched —
+ * the point is to see which messages went. */
 .row[data-leaving] {
   opacity: 0;
-  transform: translateX(1.5rem);
+  transform: translateX(2rem);
+  overflow: hidden;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom-color: transparent;
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .row[data-leaving] {
-    transition: opacity 240ms ease, transform 240ms ease;
+    transition:
+      opacity 520ms ease,
+      transform 520ms ease,
+      height 420ms ease 120ms,
+      padding 420ms ease 120ms;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* No sliding, but the outcome still shows before the list reloads. */
+  /* No drift and no waiting, but the outcome still shows before it goes. */
   .row[data-leaving] { transform: none; }
 }
 

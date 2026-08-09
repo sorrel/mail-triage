@@ -111,10 +111,10 @@ function row(proposal) {
   article.append(metrics);
 
   const actions = el("div", "row-actions");
-  // A message with nowhere to go needs to be told where. That is the only
-  // way to file a bill whose predicted folder is not in the filing account,
-  // and the only way to file mail with no history at all.
-  if (!proposal.folder && !proposal.held_folder && proposal.action !== "delete") {
+  // Every message that could be filed gets the box, not only the ones with
+  // nowhere to go. With a destination already expected it leads the list, so
+  // Return accepts it and typing is only needed to disagree.
+  if (proposal.action !== "delete") {
     actions.append(picker(proposal, article));
   }
   for (const offer of offers(proposal)) {
@@ -135,9 +135,9 @@ function row(proposal) {
  * buttons to draw, and a client that guessed wrong is refused there. */
 function offers(proposal) {
   if (!proposal.veto) {
-    // No folder means the classifier could not place it — too little history,
-    // or too inconsistent. Offering "File" anyway would move nothing and say
-    // nothing, which is the failure mode this project least tolerates.
+    // No "File" button when there is no folder: it would move nothing and say
+    // nothing, which is the failure mode this project least tolerates. The
+    // folder box beside it is how such a message gets filed.
     const offered = proposal.folder ? [{ label: "File", action: "file" }] : [];
     offered.push({ label: "Bin", action: "bin" }, { label: "Skip", action: "skip" });
     return offered;
@@ -176,31 +176,102 @@ function offers(proposal) {
  * recorded as a correction and weighted above plain history at the next
  * 'learn', so answering this once teaches the model rather than only moving
  * one message. */
+const VISIBLE_MATCHES = 7;
+
 function picker(proposal, article) {
+  const expected = proposal.folder || proposal.held_folder || null;
   const wrapper = el("span", "picker");
-  const select = document.createElement("select");
-  select.className = "folders";
-  select.setAttribute("aria-label", "Folder to file this to");
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = "File to…";
-  select.append(blank);
-  for (const name of folders) {
-    const option = document.createElement("option");
-    option.value = name;
-    option.textContent = name;
-    select.append(option);
-  }
-  select.addEventListener("change", async () => {
-    if (!select.value) return;
-    const question = confirmationFor(proposal);
-    if (question && !(await confirmOverride(question))) {
-      select.value = "";
-      return;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "folder-input";
+  input.placeholder = expected ? `File to… (${expected})` : "File to…";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-expanded", "false");
+  input.setAttribute("aria-autocomplete", "list");
+  input.setAttribute("aria-label", "Folder to file this to");
+
+  const list = el("ul", "matches");
+  list.setAttribute("role", "listbox");
+  list.hidden = true;
+
+  let matches = [];
+  let active = 0;
+
+  function draw() {
+    matches = rankFolders(input.value.trim(), folders, expected).slice(0, VISIBLE_MATCHES);
+    active = 0;
+    list.replaceChildren();
+    for (const [index, name] of matches.entries()) {
+      const option = el("li", "match", name);
+      option.setAttribute("role", "option");
+      option.id = `${proposal.id}-match-${index}`;
+      if (index === active) option.dataset.active = "true";
+      // mousedown, not click: click lands after blur has already closed the
+      // list, so the option would be gone before the press completed.
+      option.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        commit(name);
+      });
+      list.append(option);
     }
-    choose(proposal.id, "file", article, Boolean(question), select.value);
+    list.hidden = matches.length === 0;
+    input.setAttribute("aria-expanded", String(!list.hidden));
+    highlight();
+  }
+
+  function highlight() {
+    for (const [index, option] of [...list.children].entries()) {
+      if (index === active) {
+        option.dataset.active = "true";
+        input.setAttribute("aria-activedescendant", option.id);
+      } else {
+        delete option.dataset.active;
+      }
+    }
+  }
+
+  async function commit(name) {
+    if (!folders.includes(name)) return;
+    const question = confirmationFor(proposal);
+    if (question && !(await confirmOverride(question))) return;
+    close();
+    choose(proposal.id, "file", article, Boolean(question), name);
+  }
+
+  function close() {
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    input.value = "";
+  }
+
+  input.addEventListener("focus", draw);
+  input.addEventListener("input", draw);
+  input.addEventListener("blur", () => setTimeout(close, 120));
+  input.addEventListener("keydown", (event) => {
+    // Kept off the page's own j/k/f handler: inside this box those are just
+    // letters somebody is typing.
+    event.stopPropagation();
+    if (event.key === "ArrowDown" || (event.key === "Tab" && !event.shiftKey && matches.length)) {
+      event.preventDefault();
+      active = (active + 1) % matches.length;
+      highlight();
+    } else if (event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey && matches.length)) {
+      event.preventDefault();
+      active = (active - 1 + matches.length) % matches.length;
+      highlight();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if (matches[active]) commit(matches[active]);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      article.focus();
+    }
   });
-  wrapper.append(select);
+
+  wrapper.append(input, list);
   return wrapper;
 }
 
@@ -327,12 +398,20 @@ async function showDeparture(article, action) {
     state.textContent = action === "bin" ? "binning…" : "filing…";
   }
   article.dataset.acting = "true";
-  await pause(140);
+  await pause(260);
   if (state) state.textContent = action === "bin" ? "binned" : "filed";
   article.dataset.done = "true";
-  await pause(220);
+  await pause(420);
+  // Fix the height first, so the collapse animates from a real number
+  // rather than from "auto", which does not transition.
+  article.style.height = `${article.offsetHeight}px`;
+  // Two frames: one for the browser to accept the fixed height, one for the
+  // change to it to count as a transition rather than an initial value.
+  await new Promise(requestAnimationFrame);
+  await new Promise(requestAnimationFrame);
   article.dataset.leaving = "true";
-  await pause(REDUCED_MOTION.matches ? 0 : 260);
+  article.style.height = "0px";
+  await pause(560);
 }
 
 document.getElementById("apply").addEventListener("click", async () => {
@@ -479,12 +558,23 @@ document.addEventListener("keydown", (event) => {
   const index = rows.indexOf(current);
   if (event.key === "j" && index < rows.length - 1) rows[index + 1].focus();
   if (event.key === "k" && index > 0) rows[index - 1].focus();
-  // Held mail is deliberately not keyboard-actionable. Its buttons ask a
-  // question first, and a single keystroke is too cheap a way to answer one.
+  // "f" opens the folder box rather than filing outright. The expected
+  // folder leads the list, so f-Return is still two keys to accept — and the
+  // same two keys are the start of typing somewhere else instead.
+  if (current && event.key === "f") {
+    const input = current.querySelector(".folder-input");
+    if (input) {
+      event.preventDefault();
+      input.focus();
+      return;
+    }
+  }
+  // Binning and skipping stay single keystrokes, but never on held mail: its
+  // buttons ask a question, and a keystroke is too cheap a way to answer one.
   if (current && current.dataset.held) return;
   if (current && !current.querySelector(".row-actions")) return;
-  if (current && "fbs".includes(event.key)) {
-    choose(current.dataset.id, { f: "file", b: "bin", s: "skip" }[event.key], current);
+  if (current && "bs".includes(event.key)) {
+    choose(current.dataset.id, { b: "bin", s: "skip" }[event.key], current);
   }
   if (event.key === "Enter" && event.metaKey) document.getElementById("apply").click();
 });

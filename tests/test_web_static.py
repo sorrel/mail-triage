@@ -146,12 +146,13 @@ def test_file_is_not_offered_when_there_is_nowhere_to_file_to():
     assert 'proposal.folder ? [{ label: "File", action: "file" }] : []' in source
 
 
-def test_a_message_with_nowhere_to_go_gets_a_folder_picker():
-    """The live case: a bill whose predicted folder is not in the filing
-    account has no destination at all, so only the user can supply one."""
+def test_every_filable_message_gets_a_folder_box():
+    """Not only the ones with nowhere to go. A bill whose predicted folder is
+    not in the filing account needs it, and so does anything you simply want
+    filed somewhere else."""
     source = read("app.js")
     assert "function picker(" in source
-    assert '!proposal.folder && !proposal.held_folder' in source
+    assert 'if (proposal.action !== "delete") {' in source
     assert 'api("/api/folders")' in source
 
 
@@ -173,3 +174,38 @@ def test_the_departure_animation_respects_reduced_motion():
     source = read("app.js")
     assert 'matchMedia("(prefers-reduced-motion: reduce)")' in source
     assert "if (REDUCED_MOTION.matches) return Promise.resolve();" in source
+
+
+def test_the_folder_box_is_a_combobox_not_a_dropdown():
+    """Typed, fuzzy-matched, and keyboard-driven end to end."""
+    source = read("app.js")
+    assert 'input.setAttribute("role", "combobox")' in source
+    assert "rankFolders(input.value.trim(), folders, expected)" in source
+    assert "<select" not in source
+
+
+def test_the_expected_folder_leads_so_return_accepts_it():
+    source = read("app.js")
+    assert "const expected = proposal.folder || proposal.held_folder || null;" in source
+
+
+def test_f_opens_the_folder_box_rather_than_filing_blind():
+    source = read("app.js")
+    assert 'if (current && event.key === "f")' in source
+    assert "input.focus();" in source
+
+
+def test_typing_in_the_box_does_not_reach_the_pages_own_shortcuts():
+    """Inside the box, j and k and f are letters somebody is typing."""
+    assert "event.stopPropagation();" in read("app.js")
+
+
+def test_the_matcher_ships_as_its_own_file():
+    assert (STATIC / "fuzzy.js").is_file()
+    assert '<script src="/fuzzy.js" defer></script>' in read("index.html")
+
+
+def test_filed_rows_leave_slowly_enough_to_be_watched():
+    styles = read("app.css")
+    assert "opacity 520ms" in styles
+    assert "height 420ms" in styles
