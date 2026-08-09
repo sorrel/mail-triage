@@ -8,32 +8,30 @@ comfort.
 
 ---
 
-## 1. Prove the Gmail archive step against real mail
+## 1. Prove the Gmail archive step against real mail — **done** (#25)
 
-**Why first:** it is the only change in #24 that is unverified, and it sits
-directly on the path that moves mail. Until it is proved, filing a Gmail
-message into the iCloud tree either works silently or is reported as a
-failure — and nobody knows which.
+Run on 9 August 2026 against one message that was already filed, whose
+leftover was sitting in the Gmail inbox. One move through the shipped code,
+`INBOX` → `[Gmail]/All Mail`, matched on the durable Message-ID:
 
-The verification half is safe by construction: an unproven move is recorded
-as `failed`, never as `moved`, so the worst case is honest refusal rather
-than the silent duplication we had. But `archive = "[Gmail]/All Mail"` has
-only ever run against `FakeMail`.
+    before   INBOX=True   All Mail=True
+    after    INBOX=False  All Mail=True
 
-**How, exactly** — the project's own rule, one message at a time:
+The label is cleared, the message is intact, nothing was copied. Filing a
+Gmail message into the iCloud tree now completes instead of duplicating.
 
-1. `mail-triage web --source Gmail`
-2. Pick **one** Gmail message. Note its subject.
-3. Apply. The page should say `Moved 1`, not `1 failed`.
-4. In Mail, check three things: it is **not** in the Gmail inbox, it **is**
-   in the destination folder, and there is exactly **one** copy there.
-5. Press Undo. Check it comes back.
-6. Only then use it on a batch.
+Proving it exposed a hole worth remembering: `FakeMail` left the original on
+*every* move, so the archive could never clear it either and only the
+failure path had coverage — a test double disagreeing with reality, and a
+test written to match the double. The fake now models the real boundary
+(cross-account leaves the label, same-account does not), and the success
+path is covered end to end.
 
-**If step 3 says `1 failed`:** the archive move did not clear the label.
-That is the honest outcome working, not a regression. Next thing to try is
-moving the leftover to `[Gmail]/Bin` instead, or removing the label through
-some other means — worth measuring rather than guessing.
+**Still unexercised live:** the full path in one go — file a Gmail message
+and watch it land once with nothing left behind. The remaining Gmail inbox
+message is a build-failure notice better binned than filed, so this will
+happen naturally on the next Gmail message worth keeping. It will now either
+work or report a failure honestly; it can no longer duplicate silently.
 
 ---
 
