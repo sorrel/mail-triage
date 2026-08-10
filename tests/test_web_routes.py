@@ -447,25 +447,27 @@ def test_attention_held_mail_files_with_an_override_to_the_folder_it_would_have_
     assert mail.moved[0][1] == "Filed/Orders"
 
 
-def test_attention_held_mail_is_never_binned_even_with_an_override(tmp_path):
-    """A message that may want a reply must not be throwable away on a click."""
+def test_attention_held_mail_is_binned_without_ceremony(tmp_path):
+    """The guard stops mail being filed *away* unseen. The bin is a decision
+    taken in front of you and undoable, so it needs no override."""
     mail = fake_mail()
     router, session = build(
         tmp_path, proposals=[held("attention", "looks personal, may need a reply")], mail=mail
     )
     (identifier,) = session.entries
-    assert decide(router, identifier, "bin", override=True).status == 400
-    assert not mail.moved
+    assert json.loads(decide(router, identifier, "bin").body)["moved"] == 1
+    assert mail.moved[0][1] == "Deleted Messages"
 
 
-def test_a_bill_is_never_binned_from_the_browser(tmp_path):
+def test_a_bill_is_binned_without_ceremony_but_filed_only_with_an_override(tmp_path):
     mail = fake_mail()
     router, session = build(
         tmp_path, proposals=[held("invoice", "the subject looks like a bill")], mail=mail
     )
     (identifier,) = session.entries
-    assert decide(router, identifier, "bin", override=True).status == 400
-    assert not mail.moved
+    assert decide(router, identifier, "file").status == 400
+    assert json.loads(decide(router, identifier, "bin").body)["moved"] == 1
+    assert mail.moved[0][1] == "Deleted Messages"
 
 
 def test_a_bill_files_only_with_an_override(tmp_path):

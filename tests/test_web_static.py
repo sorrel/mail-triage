@@ -134,9 +134,13 @@ def test_a_keystroke_can_only_do_what_a_click_would():
     assert "button.click();" in source
 
 
-def test_filing_has_no_single_keystroke_of_its_own():
-    """"f" opens the folder box: a choice, not an action."""
-    assert 'const KEYSTROKES = { bin: "b", skip: "s" };' in read("app.js")
+def test_accepting_the_proposed_folder_costs_one_keystroke():
+    """"f" used to open the folder box, so agreeing with a destination already
+    on the screen took f then Return. Return alone now opens the box, which is
+    the case where a choice is actually being made."""
+    source = read("app.js")
+    assert 'const KEYSTROKES = { file: "f", bin: "b", skip: "s" };' in source
+    assert 'event.key === "Enter" && event.target === current' in source
 
 
 def test_a_freshly_drawn_list_puts_you_on_a_message():
@@ -159,13 +163,15 @@ def test_the_message_you_are_on_is_visible_when_clicked_as_well_as_tabbed_to():
     assert ".row:focus-within { box-shadow: inset 3px 0 0 var(--file); }" in styles
 
 
-def test_a_bill_or_a_may_need_a_reply_is_never_offered_the_bin():
-    """Mirrors routes._permitted, which is where it is actually enforced."""
+def test_held_mail_is_binned_on_the_same_terms_as_anything_else():
+    """Mirrors routes._permitted, which is where it is actually enforced. One
+    key, no question: the guard is about mail being filed away unseen, not
+    about the bin. Filing a held message still asks."""
     source = read("app.js")
-    attention_block = source.split('veto_kind === "deletion"')[1]
-    # After the deletion branch, the only action offered is filing.
-    assert 'action: "file"' in attention_block
-    assert 'action: "bin"' not in attention_block.split("return [")[-1]
+    held_block = source.split('veto_kind === "deletion"')[1]
+    assert '{ label: "Bin", action: "bin" }, { label: "Skip", action: "skip" }' in held_block
+    assert "Bin anyway" not in source
+    assert "confirm: confirmationFor(proposal)" in held_block
 
 
 def test_file_is_not_offered_when_there_is_nowhere_to_file_to():
@@ -219,9 +225,11 @@ def test_the_expected_folder_leads_so_return_accepts_it():
     assert "const expected = proposal.folder || proposal.held_folder || null;" in source
 
 
-def test_f_opens_the_folder_box_rather_than_filing_blind():
+def test_the_folder_box_is_still_a_keystroke_away_when_the_proposal_is_wrong():
+    """"f" now files to the proposed folder. Return opens the box instead, and
+    "f" falls through to it on a message that has nowhere to file to."""
     source = read("app.js")
-    assert 'if (current && event.key === "f")' in source
+    assert 'event.key === "f" || (event.key === "Enter" && event.target === current)' in source
     assert "input.focus();" in source
 
 

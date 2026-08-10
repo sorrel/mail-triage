@@ -64,9 +64,11 @@ function httpsTarget(value) {
 
 /* --- the list ------------------------------------------------------------ */
 
-/* Single-key equivalents for the row's buttons. Filing is absent on purpose:
- * "f" opens the folder box instead, which is a choice rather than an action. */
-const KEYSTROKES = { bin: "b", skip: "s" };
+/* Single-key equivalents for the row's buttons, filing included: the whole
+ * point of a proposed folder is that agreeing with it costs one key. "f" was
+ * two — open the box, press Return — for a destination already on the screen.
+ * Disagreeing is what the folder box is for, and Return still opens it. */
+const KEYSTROKES = { file: "f", bin: "b", skip: "s" };
 
 function row(proposal) {
   const article = el("article", "row");
@@ -159,23 +161,28 @@ function offers(proposal) {
     if (proposal.held_folder) {
       offered.push({ label: `File → ${proposal.held_folder}`, action: "file" });
     }
+    offered.push({ label: "Skip", action: "skip" });
     return offered;
   }
-  // Attention and invoice: filing only, once, and asked about by name.
-  // Never binning — a message that may want a reply, or that looks like a
-  // bill, must not be throwable away on one click.
-  if (!proposal.held_folder) return [];
-  return [
-    {
+  // Attention and invoice: the same three answers as any other message, and
+  // binning is one of them on the same terms — one key, no question. The
+  // guard's job is to stop mail being filed *away* unseen; it was never a
+  // reason to make throwing it out harder than throwing anything else out,
+  // and in practice held mail is binned as often as not.
+  //
+  // Filing still asks, because that is the outcome the guard exists for: a
+  // bill or a chase filed into a folder is one you stop seeing.
+  const offered = [];
+  if (proposal.held_folder) {
+    offered.push({
       label: `File anyway → ${proposal.held_folder}`,
       action: "file",
       override: true,
-      confirm:
-        proposal.veto_kind === "invoice"
-          ? "This looks like a bill. File it away anyway?"
-          : "This may be waiting on a reply from you. File it away anyway?",
-    },
-  ];
+      confirm: confirmationFor(proposal),
+    });
+  }
+  offered.push({ label: "Bin", action: "bin" }, { label: "Skip", action: "skip" });
+  return offered;
 }
 
 /* Choosing where a message goes. The chosen folder is recorded as a
@@ -674,28 +681,30 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  // "f" opens the folder box rather than filing outright. The expected
-  // folder leads the list, so f-Return is still two keys to accept — and the
-  // same two keys are the start of typing somewhere else instead.
-  if (current && event.key === "f") {
-    const input = current.querySelector(".folder-input");
-    if (input) {
-      event.preventDefault();
-      input.focus();
-      return;
-    }
-  }
-  // Binning and skipping stay single keystrokes. Which rows allow which is
-  // not decided here: the keystroke presses the button, so it can only ever
-  // do what a click would, and mail whose button asks first has no key at
-  // all. Held mail is not blanket-refused — a message held because you keep
-  // binning this sender offers Bin without asking, and refusing "b" there
-  // was friction with nothing behind it.
+  // Filing, binning and skipping are each one keystroke. Which rows allow
+  // which is not decided here: the keystroke presses the button, so it can
+  // only ever do what a click would, and mail whose button asks first has no
+  // key at all. Held mail is not blanket-refused — a message held because you
+  // keep binning this sender offers Bin without asking, and refusing "b"
+  // there was friction with nothing behind it.
   if (current && Object.values(KEYSTROKES).includes(event.key)) {
     const button = current.querySelector(`.row-actions button[data-key="${event.key}"]`);
     if (button) {
       event.preventDefault();
       button.click();
+      return;
+    }
+  }
+
+  // Disagreeing with the proposal: Return opens the folder box, arrows choose
+  // in it, Escape comes back. "f" falls through to the same place when there
+  // is no File button to press — a message with nowhere to file to is exactly
+  // the one that needs somewhere typed.
+  if (current && (event.key === "f" || (event.key === "Enter" && event.target === current))) {
+    const input = current.querySelector(".folder-input");
+    if (input) {
+      event.preventDefault();
+      input.focus();
     }
   }
 });
