@@ -277,23 +277,19 @@ def _permitted(proposal, action: str, override: bool, folder: str | None = None)
       from this sender is only ever binned", so binning is not an override
       at all; it is the obvious answer, and ``guards`` calls such mail "the
       prime candidate" for it.
-    - **An attention or invoice veto** — filing only, and only with an
-      explicit per-message ``override``. Never binning. A message that may
-      need a reply, or that looks like a bill, must not be throwable away on
-      one click; the terminal's ``review_held`` makes the same distinction,
-      declining by default and refusing a batch answer.
+    - **An attention or invoice veto** — binning freely, filing only with an
+      explicit per-message ``override``. The guard exists to stop mail being
+      filed *away* unseen, which is the outcome you cannot notice; binning is
+      a decision taken in front of you, undoable from the journal, and is not
+      made harder here than it is for any other message. It was once refused
+      outright, which left a held row with no folder of its own a dead end.
     """
     if action not in ("file", "bin", "skip"):
         return f"{action!r} is not a thing that can be done to a message"
-    if proposal.veto is None or action == "skip":
+    if proposal.veto is None or action in ("skip", "bin"):
         return None
     if proposal.veto_kind == "deletion":
         return None
-    if action == "bin":
-        return (
-            f"this was held back — {proposal.veto} — and mail held for that "
-            "reason is never binned from here"
-        )
     if not override:
         return f"held back: {proposal.veto}"
     if not (folder or proposal.held_folder):
