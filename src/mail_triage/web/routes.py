@@ -59,6 +59,7 @@ class Router:
         port: int,
         folders: list[str] | None = None,
         unsubscribe_source=None,
+        on_quit=None,
     ) -> None:
         self.session = session
         self.config = config
@@ -73,6 +74,8 @@ class Router:
         self.token = token
         self.port = port
         self.unsubscribe_source = unsubscribe_source
+        # Set by ``serve``; stopping the socket is the socket's business.
+        self.on_quit = on_quit
         self.last_request = 0.0
         self._cached_candidates = None
         self._batch_id = None
@@ -97,6 +100,8 @@ class Router:
             return Response.json(candidates_payload(self._candidates()))
         if request.path == "/api/unsubscribe/send" and request.method == "POST":
             return self._unsubscribe_send(request)
+        if request.path == "/api/quit" and request.method == "POST":
+            return self._quit()
         if request.method == "GET" and not request.path.startswith("/api/"):
             return self._static(request.path)
         return Response.json({"error": "no such route"}, status=404)
@@ -183,6 +188,22 @@ class Router:
             self.session.run_id, self.config, self.mail, self.config.filing_account
         )
         return Response.json({"reversed": reversed_count, "failed": failed})
+
+    # --- stopping ---------------------------------------------------------
+
+    def _quit(self) -> Response:
+        """End the run from the browser — the equivalent of ctrl-C.
+
+        The apply lock is held whilst answering, so a quit that arrives whilst
+        mail is being moved waits for the batch rather than pulling the server
+        out from under it. The reply is written before anything is stopped;
+        ``on_quit`` only asks for the socket to close, it does not close it
+        here.
+        """
+        with self._applying:
+            if self.on_quit is not None:
+                self.on_quit()
+        return Response.json({"stopping": True})
 
     # --- unsubscribing ----------------------------------------------------
 

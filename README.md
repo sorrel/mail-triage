@@ -161,7 +161,7 @@ click through, with the reasoning shown beside every message.
 ```
 $ mail-triage web
 Serving 15 messages on http://127.0.0.1:8765
-Opening your browser…   (ctrl-C to stop)
+Opening your browser…   (q there, or ctrl-C here, to stop)
 ```
 
 It binds `127.0.0.1` and nothing else, so it is reachable only from this
@@ -169,7 +169,10 @@ machine. The URL carries a token that works **once**: the page trades it for
 a header token and drops it from the address bar, so the URL left in your
 scrollback is worthless afterwards. The server stops on Ctrl-C, or after
 thirty minutes with no request — it can move mail, and should not still be
-listening tomorrow morning.
+listening tomorrow morning. `q` on the page ends the run too — the server
+stops and the process exits, exactly as Ctrl-C would, without reaching for the
+terminal. It is refused whilst an Apply is in flight; mail in the middle of
+moving is the one moment the run should not end.
 
 Nothing moves until you press Apply, and what moves is journalled and
 undoable exactly as a terminal run is. Mail a guard held back cannot be filed
@@ -218,6 +221,7 @@ messages, left and right along the controls of the message you are on.
 | `b` | Bin — where the button exists and asks nothing |
 | `s` | Skip |
 | `⌘↵` | Apply, from anywhere, including mid-word in the folder box |
+| `q` | Quit — ends the run and the process |
 | `esc` | Close the folder box, or answer "leave it" to a confirmation |
 
 A keystroke presses the message's own button, so it can only ever do what a

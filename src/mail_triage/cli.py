@@ -1032,7 +1032,7 @@ def web(port: int, open_browser: bool, source_names: tuple[str, ...]) -> None:
     def ready(url: str, actual_port: int) -> None:
         click.echo(f"Serving {len(proposals)} messages on http://127.0.0.1:{actual_port}")
         if open_browser:
-            click.echo("Opening your browser…   (ctrl-C to stop)")
+            click.echo("Opening your browser…   (q there, or ctrl-C here, to stop)")
         else:
             click.echo(f"Open this yourself (the token works once):\n  {url}")
 

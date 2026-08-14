@@ -447,6 +447,8 @@ function focusFirstRow() {
 
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 
+let applying = false;
+
 function pause(milliseconds) {
   if (REDUCED_MOTION.matches) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -457,16 +459,26 @@ function pause(milliseconds) {
  * leaves — one after another, so the order is legible — and only then is the
  * list reloaded. Under prefers-reduced-motion the states still appear; the
  * waiting does not. */
+/* Binning runs to its own, much shorter clock — see the note beside
+ * .row[data-leaving="bin"] in app.css. The numbers are paired with the CSS
+ * transitions: the last pause is the length of the collapse, so the next row
+ * does not start until this one's gap has closed. */
+const DEPARTURE = {
+  file: { acting: 260, done: 420, leaving: 560 },
+  bin: { acting: 90, done: 140, leaving: 200 },
+};
+
 async function showDeparture(article, action) {
+  const timing = DEPARTURE[action] ?? DEPARTURE.file;
   const state = article.querySelector(".state");
   if (state) {
     state.textContent = action === "bin" ? "binning…" : "filing…";
   }
   article.dataset.acting = "true";
-  await pause(260);
+  await pause(timing.acting);
   if (state) state.textContent = action === "bin" ? "binned" : "filed";
   article.dataset.done = "true";
-  await pause(420);
+  await pause(timing.done);
   // Fix the height first, so the collapse animates from a real number
   // rather than from "auto", which does not transition.
   article.style.height = `${article.offsetHeight}px`;
@@ -474,9 +486,11 @@ async function showDeparture(article, action) {
   // change to it to count as a transition rather than an initial value.
   await new Promise(requestAnimationFrame);
   await new Promise(requestAnimationFrame);
-  article.dataset.leaving = "true";
+  // The value names the pace, not just the fact: the CSS picks the bin
+  // timings off it.
+  article.dataset.leaving = action === "bin" ? "bin" : "file";
   article.style.height = "0px";
-  await pause(560);
+  await pause(timing.leaving);
 }
 
 document.getElementById("apply").addEventListener("click", async () => {
@@ -490,6 +504,9 @@ document.getElementById("apply").addEventListener("click", async () => {
   if (decisions.length === 0) return;
   const apply = document.getElementById("apply");
   apply.disabled = true;
+  // The button's disabled state cannot say this: it is also how "nothing is
+  // chosen" is shown. Quitting needs to know the difference.
+  applying = true;
   document.getElementById("tally").textContent = "Moving…";
   try {
     const result = await api("/api/decisions", {
@@ -517,6 +534,7 @@ document.getElementById("apply").addEventListener("click", async () => {
   } catch (error) {
     fail(error);
   } finally {
+    applying = false;
     apply.disabled = chosen.size === 0;
   }
 });
@@ -533,6 +551,37 @@ document.getElementById("undo").addEventListener("click", async () => {
     fail(error);
   }
 });
+
+/* --- stopping ------------------------------------------------------------ */
+
+/* q ends the run: the server stops listening and the process exits, exactly
+ * as ctrl-C in the terminal would. Nothing that has been applied is affected
+ * — that mail has already moved — and choices not yet applied are simply not
+ * applied, so the worst case is a run started again.
+ *
+ * The page says so itself rather than leaving a dead tab pointing at a
+ * refused connection, and the request is deliberately not awaited before
+ * that: the server answers and then closes, so a slow reply must not leave
+ * the page looking as though nothing happened. */
+let quitting = false;
+
+async function quit() {
+  if (quitting) return;
+  quitting = true;
+  clearFailure();
+  document.getElementById("proposals").replaceChildren(
+    el("p", "empty", "Stopped. You can close this tab.")
+  );
+  document.getElementById("tally").textContent = "Run ended.";
+  for (const id of ["apply", "undo", "open-lists"]) {
+    document.getElementById(id).disabled = true;
+  }
+  try {
+    await api("/api/quit", { method: "POST", body: "{}" });
+  } catch {
+    // The socket closing under the reply is a successful quit, not a failure.
+  }
+}
 
 /* --- mailing lists ------------------------------------------------------- */
 
@@ -674,6 +723,14 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (typing) return;
+
+  // Quitting. Not whilst an Apply is in flight: mail in the middle of moving
+  // is the one moment the run should not be ended.
+  if (event.key === "q" && !applying) {
+    event.preventDefault();
+    quit();
+    return;
+  }
 
   if (current && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
     event.preventDefault();
