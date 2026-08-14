@@ -88,6 +88,19 @@ def serve(
     if on_ready is not None:
         on_ready(url, actual_port)
 
+    def quit_now() -> None:
+        """Asked for by the page's q. In a thread of its own, and after a
+        moment, so the reply to the quit request is written and read before
+        the socket goes: a browser told nothing is a browser showing an
+        error page for a shutdown that worked."""
+        def stop() -> None:
+            time.sleep(0.25)
+            server.shutdown()
+
+        threading.Thread(target=stop, daemon=True).start()
+
+    router.on_quit = quit_now
+
     def watchdog() -> None:
         while True:
             time.sleep(5)

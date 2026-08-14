@@ -16,7 +16,7 @@ from mail_triage.envelope import MessageRow
 from mail_triage.mail_app import FakeMail
 from mail_triage.model.classify import Proposal
 from mail_triage.web.routes import Router
-from mail_triage.web.server import build_handler
+from mail_triage.web.server import build_handler, serve
 from mail_triage.web.session import Session
 
 TOKEN = "a-very-secret-token"
@@ -122,3 +122,47 @@ def test_an_oversized_body_is_refused_without_being_read(server):
     with pytest.raises(urllib.error.HTTPError) as error:
         urllib.request.urlopen(request, timeout=5)
     assert error.value.code == 413
+
+
+def test_quitting_from_the_page_stops_the_server(tmp_path):
+    """q in the browser ends the run: serve() returns, and the process with
+    it. The reply is written first — the page must be told, not dropped."""
+    message = MessageRow(
+        rowid=1, sender="shop@shop.example", subject="Order confirmed",
+        date_sent=1_700_000_000, mailbox_url="imap://AAAAAAAA/INBOX", read=False,
+    )
+    static = tmp_path / "static"
+    static.mkdir()
+    router = Router(
+        session=Session([Proposal(message, "Filed/Orders", 0.99, "12 filings", "sender")]),
+        config=Config(account_url_prefix="imap://AAAAAAAA", local_dir=tmp_path / "local"),
+        mail=FakeMail(inbox=[1], mailboxes=["Filed/Orders"]), accounts={},
+        static_dir=static, token=TOKEN, port=0,
+    )
+    ready = threading.Event()
+    bound = {}
+
+    def on_ready(url, actual_port):
+        bound["port"] = actual_port
+        router.port = actual_port  # the Host check compares against it
+        ready.set()
+
+    thread = threading.Thread(
+        target=serve,
+        kwargs={"router": router, "port": 0, "open_browser": False, "on_ready": on_ready},
+        daemon=True,
+    )
+    thread.start()
+    assert ready.wait(5)
+
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{bound['port']}/api/quit",
+        data=b"{}",
+        headers={"X-Mail-Triage-Token": TOKEN},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert json.loads(response.read())["stopping"] is True
+
+    thread.join(timeout=5)
+    assert not thread.is_alive()

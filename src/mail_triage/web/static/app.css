@@ -283,6 +283,19 @@ main { max-width: var(--measure); margin: 0 auto; }
       height 420ms ease 120ms,
       padding 420ms ease 120ms;
   }
+
+  /* Binned mail goes at a different pace. Filing is worth watching because
+   * each message goes somewhere different and the folder is worth reading;
+   * binning is one destination, read at a glance, and there are usually far
+   * more of them. So it keeps the same movement and takes a third of the
+   * time — still visibly a departure, not a list that blinks. */
+  .row[data-leaving="bin"] {
+    transition:
+      opacity 180ms ease,
+      transform 180ms ease,
+      height 150ms ease 40ms,
+      padding 150ms ease 40ms;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 from mail_triage.config import Config
 from mail_triage.envelope import MessageRow
@@ -215,6 +216,49 @@ def test_undo_reverses_the_run_this_server_made(tmp_path):
 def test_undo_before_anything_was_applied_is_refused(tmp_path):
     router, _ = build(tmp_path)
     assert router.handle(api("/api/undo", method="POST", payload={})).status == 400
+
+
+# --- quitting ---------------------------------------------------------------
+
+def test_quit_asks_the_server_to_stop_and_says_so(tmp_path):
+    router, _ = build(tmp_path)
+    asked = []
+    router.on_quit = lambda: asked.append(True)
+    response = router.handle(api("/api/quit", method="POST", payload={}))
+    assert response.status == 200
+    assert json.loads(response.body)["stopping"] is True
+    assert asked == [True]
+
+
+def test_quit_without_a_way_to_stop_still_answers(tmp_path):
+    """The routing is a pure function; a Router built without a socket behind
+    it (every test above) must not fall over on the quit route."""
+    router, _ = build(tmp_path)
+    assert router.handle(api("/api/quit", method="POST", payload={})).status == 200
+
+
+def test_quit_waits_for_mail_in_the_middle_of_moving(tmp_path):
+    """The apply lock is the guarantee: a quit arriving mid-batch does not
+    pull the server out from under a move."""
+    router, _ = build(tmp_path)
+    router.on_quit = lambda: None
+    with router._applying:
+        stopped = threading.Event()
+        thread = threading.Thread(
+            target=lambda: (
+                router.handle(api("/api/quit", method="POST", payload={})),
+                stopped.set(),
+            )
+        )
+        thread.start()
+        assert not stopped.wait(0.2)
+    thread.join(timeout=5)
+    assert stopped.is_set()
+
+
+def test_quit_is_only_a_post(tmp_path):
+    router, _ = build(tmp_path)
+    assert router.handle(api("/api/quit")).status == 404
 
 
 # --- unsubscribing ----------------------------------------------------------
