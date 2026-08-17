@@ -159,35 +159,13 @@ hand whilst a false negative files a breach notice away silently. What that
 does *not* license is a guard so broad that auto mode stops being useful, and
 that is a question about your mailbox rather than about the word list.
 
-To schedule the runs, `contrib/com.mail-triage.auto.plist` is a LaunchAgent
-template. It is a template on purpose — the tool never installs it. Fill in
-the two paths, copy it to `~/Library/LaunchAgents/`, and `launchctl load` it
-yourself.
-
-**Then grant Full Disk Access to the agent's own program.** macOS grants that
-access per binary, so your terminal having it does not give it to the
-LaunchAgent: without this the job loads perfectly and then fails every morning
-with `Operation not permitted` on a file you can plainly read.
-
-Which binary matters. The obvious choice is `uv`, but granting Full Disk
-Access to `uv` grants it to *every* project `uv run` ever launches — a large
-permission for reading one mailbox. So the agent points instead at an
-interpreter this project alone uses:
-
-```bash
-./contrib/dedicated-interpreter.sh
-```
-
-That builds `.venv/bin/mail-triage-python` and prints the path to add under
-System Settings → Privacy & Security → Full Disk Access. The grant then covers
-this venv and nothing else. Re-run it after any `uv sync` that rebuilds the
-venv, and re-check the grant — a rebuilt venv takes the copy with it, and the
-agent fails loudly rather than quietly.
-
-**Check it before trusting the schedule**, without waiting for 08:30 or moving
-any mail: copy the plist to a second label, swap `--auto` for `--dry-run`, drop
-the `StartCalendarInterval`, `launchctl kickstart` it, and read
-`local/auto-runs/`. Then unload and delete the copy.
+**This tool is never scheduled and never runs itself.** `--auto` is something
+you invoke; there is no agent, no daemon and no timer, deliberately. Reading
+Mail's database needs Full Disk Access, and macOS grants that per binary with
+nothing narrower available for `~/Library/Mail` — so an unattended runner would
+have to hold blanket disk access permanently, and, being a Python interpreter,
+would extend it to every dependency in the venv. That is a poor trade for
+saving a command, so the command stays.
 
 Then `mail-triage report` is the thing worth reading afterwards. It leads with
 what the security guard held, in full and by subject, and counts everything

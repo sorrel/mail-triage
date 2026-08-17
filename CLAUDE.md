@@ -274,35 +274,27 @@ read.
   which is a question about the mailbox, not the word list, so it was
   measured rather than argued: **178 of 13,993 filed messages, 1.3%**, with no
   single term running away and a tail of individual CVEs.
-- **`launchctl load` succeeding says nothing about whether the job can do its
-  work.** The agent registered perfectly on 17 August 2026 — right program,
-  right working directory, both calendar intervals, `state = not running` as
-  intended. It would still have failed at 08:30 every morning:
-  `PermissionError: Operation not permitted` on `Envelope Index-wal`. macOS
-  grants Full Disk Access per *responsible binary*, and a LaunchAgent's
-  responsible binary is its own program, not the terminal that had been
-  reading that database for months. The terminal having the grant does not
-  give it to the agent.
-  Two things follow. **Kickstart a scheduled job rather than waiting for it**
-  — with `--dry-run` swapped in and no `StartCalendarInterval`, under a
-  separate label so the real agent is never in a half-configured state; that
-  is how this was found, and it cost one minute instead of one morning. And
-  the failure surfaced as a **bare traceback into a log nobody opens**, since
-  `triage`/`web`/`report` caught only `InputError` around `gather` whilst
-  `accounts` and `size` had handled `PermissionError` all along. `_no_disk_access`
-  now says which binary to add and that the agent is not the terminal.
-  The one mercy: it fails safe. No database means no proposals, so a run that
-  cannot read moves nothing.
-  **Which binary gets the grant is a real decision, not a formality.** The
-  obvious one is `uv`, and granting Full Disk Access to `/opt/homebrew/bin/uv`
-  hands it to every project `uv run` launches — every sibling under
-  `scripts/`, health-adjacent ones included. `contrib/dedicated-interpreter.sh`
-  copies the interpreter to `.venv/bin/mail-triage-python` so the grant covers
-  this venv alone; the copy needs `libpython*.dylib` symlinked into
-  `.venv/lib/` (it loads `@executable_path/../lib/`) and must live in
-  `.venv/bin/` so CPython finds `pyvenv.cfg` one level up and resolves this
-  venv's site-packages. `uv sync` may take it with it, hence a re-runnable
-  script rather than a one-off.
+- **This tool is deliberately never scheduled, and the reason is a permission
+  it would have to hold.** A LaunchAgent was built, installed and tested on
+  17 August 2026, then removed the same day. Two findings are worth keeping.
+  First, `launchctl load` succeeding says nothing about whether the job can
+  work: the agent registered perfectly and would still have failed every
+  morning with `PermissionError: Operation not permitted` on
+  `Envelope Index-wal`, because macOS grants Full Disk Access per *responsible
+  binary* and an agent's binary is not the terminal that has had the grant for
+  months. Kickstarting a `--dry-run` copy under a separate label found that in
+  a minute; waiting for the schedule would have taken a morning.
+  Second, and the reason the feature went rather than the bug being fixed:
+  there is no narrower TCC grant than Full Disk Access for `~/Library/Mail`,
+  so any unattended runner holds blanket disk read permanently — and pointing
+  it at a Python interpreter extends that to every dependency in the venv,
+  executing unattended. Narrowing *which* binary held it reduced blast radius
+  across projects and did nothing about blast radius across dependencies,
+  which is the one that matters. Running by hand from a terminal that already
+  has the grant costs one command and holds nothing. If scheduling is ever
+  revisited, the prerequisite is reading Mail without the database at all —
+  and the blocker there is the folder list, since AppleScript returns flat
+  leaf names and loses the nested paths filing depends on.
 - **A batch that reports only at the end looks stalled, and then wastes the
   time it saved.** The browser's Apply sent every decision in one request:
   Mail moves one message at a time and takes seconds over each, so a press of
