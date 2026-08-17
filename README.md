@@ -164,6 +164,16 @@ template. It is a template on purpose — the tool never installs it. Fill in
 the two paths, copy it to `~/Library/LaunchAgents/`, and `launchctl load` it
 yourself.
 
+**Then grant Full Disk Access to the agent's own program**, and check it
+before trusting the schedule. macOS grants that access per binary, so your
+terminal having it does not give it to the LaunchAgent: without this the job
+loads perfectly and then fails every morning with `Operation not permitted`
+on a file you can plainly read. Add the first string in the plist's
+`ProgramArguments` under System Settings → Privacy & Security → Full Disk
+Access. To check without waiting for the schedule — or moving any mail — copy
+the plist to a second label, swap `--auto` for `--dry-run`, drop the
+`StartCalendarInterval`, and `launchctl kickstart` it.
+
 Then `mail-triage report` is the thing worth reading afterwards. It leads with
 what the security guard held, in full and by subject, and counts everything
 else — because a filing that went where it always goes is not news.
