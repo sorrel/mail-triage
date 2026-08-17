@@ -29,6 +29,12 @@ training_exclusions = [
 confidence_threshold = 0.7
 # Minimum confidence for --auto to move without asking
 auto_threshold = 0.9
+# The most messages one unattended run will file. A scheduled run is the only
+# kind nobody watches go wrong, so what a single one can do is bounded — and
+# stays undoable, since the whole capped batch is one journal run. Anything
+# over the cap is left for the next run, most confident first. Interactive
+# runs ignore this: somebody is there, reading the table.
+auto_limit = 50
 # Recency decay: a filing decision this old counts half as much
 half_life_days = 365.0
 # How much more a correction counts than a historical filing

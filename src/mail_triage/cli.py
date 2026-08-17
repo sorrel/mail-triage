@@ -15,6 +15,7 @@ from mail_triage.asking import ask_all, rank_uncertain
 from mail_triage.bounces import attribute, candidate_rows, render_report
 from mail_triage.cli_help import ColouredGroup
 from mail_triage.config import load_config
+from mail_triage.corpus import build_corpus
 from mail_triage.corrections import load_corrections, record_overrides
 from mail_triage.envelope import DEFAULT_DB_PATH, EnvelopeReader, MessageRow, snapshot_database
 from mail_triage.execute import execute
@@ -24,6 +25,7 @@ from mail_triage.journal import Journal, list_runs, new_run_id, undo_run
 from mail_triage.mail_app import AppleScriptMail, MailError, MailNotRunningError
 from mail_triage.model.classify import Classifier
 from mail_triage.model.store import load_model, save_model, train_from_history
+from mail_triage.report import DEFAULT_SINCE_DAYS, recent_runs, render
 from mail_triage.review import (
     auto_decisions, render_table, review, review_held, review_unplaced, summarise,
 )
@@ -34,6 +36,13 @@ from mail_triage.never_personal import (
 )
 from mail_triage.never_personal import forget_never_personal as forget_never_personal_sender
 from mail_triage.rules import RulesError, forget_rule, load_rules
+from mail_triage.security import (
+    SecuritySendersError,
+    declare_security_sender,
+    forget_security_sender,
+    load_security_senders,
+    security_reason,
+)
 from mail_triage.sends import (
     FailedRequest,
     SentRequest,
@@ -489,6 +498,13 @@ def triage(
         never_personal = load_never_personal(config.never_personal_path)
     except NeverPersonalError as error:
         raise click.ClickException(str(error)) from error
+    # Loaded for the same reason the rules are: an unreadable list must stop
+    # the run. Silence here means security mail is filed unattended, which is
+    # the one outcome this guard exists to prevent.
+    try:
+        security_senders = load_security_senders(config.security_senders_path)
+    except SecuritySendersError as error:
+        raise click.ClickException(str(error)) from error
     try:
         inputs = gather(config, sources, ask, DEFAULT_DB_PATH)
     except InputError as error:
@@ -502,6 +518,7 @@ def triage(
             model, config, folders, guard=guard,
             deletion_index=inputs.deletion_index, rules=current_rules,
             attachments=inputs.attachments, never_personal=never_personal,
+            security_senders=security_senders,
         )
         return [classifier.classify(message) for message in inputs.messages]
 
@@ -546,6 +563,27 @@ def triage(
             f"\nFiling {len(decisions)} message{'s' if len(decisions) != 1 else ''} "
             f"at {config.auto_threshold:g} confidence or above, unprompted."
         )
+        eligible = sum(
+            1 for item in proposals
+            if item.folder is not None and item.confidence >= config.auto_threshold
+        )
+        if eligible > len(decisions):
+            # Said out loud rather than left to be inferred from a count that
+            # happens to equal the cap. A capped run is a normal outcome, but
+            # a silently capped one looks like a model that suddenly went shy.
+            click.echo(
+                f"Capped at auto_limit ({config.auto_limit}); "
+                f"{eligible - len(decisions)} left for the next run."
+            )
+        held_security = [item for item in proposals if item.veto_kind == "security"]
+        if held_security:
+            # Printed by the unattended run itself, not only by 'report'. The
+            # log file is where a scheduled run's output goes, and this is the
+            # line that makes reading it worthwhile.
+            click.echo(
+                f"\n{len(held_security)} held back as security-relevant "
+                "— run 'mail-triage report' to read them."
+            )
         _act_on(decisions, sources, inputs.source_folders, config, mail)
         return
 
@@ -954,6 +992,195 @@ def runs() -> None:
         click.echo(f"{run_id}  {moved} moved, {undone} undone")
 
 
+@cli.command()
+@click.option(
+    "--since",
+    "since_days",
+    default=DEFAULT_SINCE_DAYS,
+    type=float,
+    metavar="DAYS",
+    help="How far back to read the run journals.",
+)
+@click.option(
+    "--source",
+    "source_names",
+    multiple=True,
+    help="Classify only these sources when listing held-back mail.",
+)
+def report(since_days: float, source_names: tuple[str, ...]) -> None:
+    """What the unattended runs did, and what is still waiting on you.
+
+    Security-relevant mail leads, in full: it is the one category whose cost
+    is measured in hours, and a scheduled run's output may not be read for a
+    day. Everything else is counted — a filing that went where it always
+    goes is not news.
+
+    Read-only. It classifies the current inbox to find what a guard is
+    holding, and reads the journals for what moved. It moves nothing.
+    """
+    config = load_config()
+    runs = recent_runs(config, since_days)
+
+    # The journal records moves; a message a guard held back never became an
+    # entry, because nothing was attempted on it. So the held half has to be
+    # classified fresh — which is also what makes the report current rather
+    # than a description of the last run's opinion.
+    sources = _select_sources(config, source_names)
+    model = load_model(config.model_path)
+    try:
+        rules = load_rules(config.rules_path)
+        never_personal = load_never_personal(config.never_personal_path)
+        security_senders = load_security_senders(config.security_senders_path)
+    except (RulesError, NeverPersonalError, SecuritySendersError) as error:
+        raise click.ClickException(str(error)) from error
+    try:
+        inputs = gather(config, sources, False, DEFAULT_DB_PATH)
+    except InputError as error:
+        raise click.ClickException(str(error)) from error
+
+    mail = AppleScriptMail()
+    guard, guard_state = _make_header_guard(mail)
+    classifier = Classifier(
+        model, config, inputs.folders, guard=guard,
+        deletion_index=inputs.deletion_index, rules=rules,
+        attachments=inputs.attachments, never_personal=never_personal,
+        security_senders=security_senders,
+    )
+    proposals = [classifier.classify(message) for message in inputs.messages]
+    if guard_state["fetches"]:
+        click.echo("\r" + " " * PROGRESS_LINE_WIDTH + "\r", nl=False, err=True)
+
+    held_security = [item for item in proposals if item.veto_kind == "security"]
+    held_other = sum(
+        1 for item in proposals if item.veto is not None and item.veto_kind != "security"
+    )
+    click.echo(render(runs, held_security, held_other, since_days))
+
+
+@cli.command()
+@click.option(
+    "--add",
+    default=None,
+    metavar="SENDER|DOMAIN",
+    help="Declare an address or domain security-relevant: its mail is never "
+    "filed by an unattended run. A domain covers its subdomains.",
+)
+@click.option(
+    "--forget",
+    default=None,
+    metavar="SENDER|DOMAIN",
+    help="Withdraw a declaration.",
+)
+@click.option(
+    "--measure",
+    is_flag=True,
+    default=False,
+    help="Report what share of your filing history the subject vocabulary "
+    "would hold back. Read-only; moves nothing.",
+)
+def security(add: str | None, forget: str | None, measure: bool) -> None:
+    """Mail that must never be filed by a run nobody watched.
+
+    Auto mode files only what it is sure about, and it is surest about
+    exactly the senders that matter here — high-volume, consistent alert
+    mail with a long filing history. A breach notice reads 0.97 and files
+    itself. This guard holds such mail in the inbox instead, whatever the
+    confidence and whatever rule names the sender.
+
+    Two layers: a subject vocabulary that always applies, and the senders
+    you declare here for mail whose subjects give nothing away.
+    """
+    config = load_config()
+    if add is not None:
+        try:
+            changed = declare_security_sender(config.security_senders_path, add)
+        except SecuritySendersError as error:
+            raise click.ClickException(str(error)) from error
+        click.echo(
+            f"{add} is security-relevant — its mail will not be filed unattended."
+            if changed
+            else f"{add} was already declared security-relevant."
+        )
+        return
+    if forget is not None:
+        try:
+            removed = forget_security_sender(config.security_senders_path, forget)
+        except SecuritySendersError as error:
+            raise click.ClickException(str(error)) from error
+        if not removed:
+            raise click.ClickException(f"{forget} was not declared security-relevant.")
+        click.echo(f"{forget} may be filed unattended again.")
+        return
+    if measure:
+        _measure_security_vocabulary(config)
+        return
+    try:
+        declared = load_security_senders(config.security_senders_path)
+    except SecuritySendersError as error:
+        raise click.ClickException(str(error)) from error
+    if not declared:
+        click.echo(
+            "No senders declared. The subject vocabulary still applies to every "
+            "message — run 'mail-triage security --measure' to see its reach."
+        )
+        return
+    for entry in sorted(declared):
+        click.echo(f"  {entry}")
+    click.echo(
+        f"\n{len(declared)} declared. Withdraw one with: "
+        "mail-triage security --forget <sender>"
+    )
+
+
+def _measure_security_vocabulary(config) -> None:
+    """How much of the real corpus the guard would hold back.
+
+    The conventions here say measure rather than argue, and this guard is
+    written deliberately broadly — the asymmetry licenses it, since a false
+    positive costs one message filed by hand. What the asymmetry does *not*
+    license is a guard so broad that auto mode files nothing, and that is a
+    question about this mailbox rather than about the vocabulary. So: run it
+    over the filing history and print the share.
+    """
+    # The training corpus rather than the raw database: it is already
+    # filtered to messages that represent a real filing decision, which is
+    # exactly the population auto mode would act on. Measuring against every
+    # message ever received would flatter the guard by diluting it with mail
+    # nobody files.
+    with tempfile.TemporaryDirectory() as work:
+        reader = EnvelopeReader(snapshot_database(DEFAULT_DB_PATH, Path(work)))
+        try:
+            history = build_corpus(reader.all_messages(), config)
+        finally:
+            reader.close()
+    if not history:
+        click.echo("No filing history to measure against.")
+        return
+    declared = load_security_senders(config.security_senders_path)
+    held = [
+        example for example in history
+        if security_reason(example.sender, example.subject, declared) is not None
+    ]
+    share = len(held) / len(history)
+    click.echo(
+        f"{len(held)} of {len(history)} filed messages ({share:.1%}) would be "
+        "held back as security-relevant."
+    )
+    if share > 0.10:
+        click.echo(
+            "\nThat is high enough to make auto mode do very little. Consider "
+            "cutting the vocabulary in security.py — the terms are listed there "
+            "with the reasoning for each."
+        )
+    reasons: dict[str, int] = {}
+    for example in held:
+        reason = security_reason(example.sender, example.subject, declared)
+        reasons[reason or ""] = reasons.get(reason or "", 0) + 1
+    click.echo("\nWhat fired, commonest first:")
+    for reason, count in sorted(reasons.items(), key=lambda pair: -pair[1])[:15]:
+        click.echo(f"  {count:>5}  {reason}")
+
+
 def _unsubscribe_candidates(config, mail):
     """The ranked candidates, read from a fresh snapshot on demand.
 
@@ -1001,6 +1228,13 @@ def web(port: int, open_browser: bool, source_names: tuple[str, ...]) -> None:
         never_personal = load_never_personal(config.never_personal_path)
     except NeverPersonalError as error:
         raise click.ClickException(str(error)) from error
+    # Loaded for the same reason the rules are: an unreadable list must stop
+    # the run. Silence here means security mail is filed unattended, which is
+    # the one outcome this guard exists to prevent.
+    try:
+        security_senders = load_security_senders(config.security_senders_path)
+    except SecuritySendersError as error:
+        raise click.ClickException(str(error)) from error
     try:
         inputs = gather(config, sources, False, DEFAULT_DB_PATH)
     except InputError as error:
@@ -1012,6 +1246,7 @@ def web(port: int, open_browser: bool, source_names: tuple[str, ...]) -> None:
         model, config, inputs.folders, guard=guard,
         deletion_index=inputs.deletion_index, rules=rules,
         attachments=inputs.attachments, never_personal=never_personal,
+        security_senders=security_senders,
     )
     proposals = [classifier.classify(message) for message in inputs.messages]
     if guard_state["fetches"]:
