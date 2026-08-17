@@ -455,27 +455,47 @@ function pause(milliseconds) {
 }
 
 /* Applying should be something you watch happen, not a list that blinks and
- * comes back different. Each chosen row says what is being done to it, then
- * leaves — one after another, so the order is legible — and only then is the
- * list reloaded. Under prefers-reduced-motion the states still appear; the
- * waiting does not. */
+ * comes back different. Each chosen row says what is being done to it whilst
+ * it is being done, then leaves — one after another, so the order is legible.
+ * Under prefers-reduced-motion the states still appear; the waiting does not.
+ *
+ * The row's word is not an animation any more: "filing…" goes up before the
+ * request and stays up for exactly as long as Mail takes, so the page is
+ * saying what is true rather than what it expects. */
 /* Binning runs to its own, much shorter clock — see the note beside
  * .row[data-leaving="bin"] in app.css. The numbers are paired with the CSS
  * transitions: the last pause is the length of the collapse, so the next row
- * does not start until this one's gap has closed. */
+ * does not start leaving until this one's gap has closed. */
 const DEPARTURE = {
-  file: { acting: 260, done: 420, leaving: 560 },
-  bin: { acting: 90, done: 140, leaving: 200 },
+  file: { done: 420, leaving: 560 },
+  bin: { done: 140, leaving: 200 },
 };
+
+function markActing(article, action) {
+  const state = article.querySelector(".state");
+  if (state) {
+    state.dataset.action = action;
+    state.textContent = action === "bin" ? "binning…" : "filing…";
+  }
+  article.dataset.acting = "true";
+}
+
+/* A message that did not move stays exactly where it is and says so. It must
+ * never be animated away as though it had worked — a failed Apply that looks
+ * like a successful one is the failure mode this project least tolerates. */
+function markStalled(article) {
+  delete article.dataset.acting;
+  article.dataset.stalled = "true";
+  const state = article.querySelector(".state");
+  if (state) {
+    state.dataset.action = "failed";
+    state.textContent = "did not move";
+  }
+}
 
 async function showDeparture(article, action) {
   const timing = DEPARTURE[action] ?? DEPARTURE.file;
   const state = article.querySelector(".state");
-  if (state) {
-    state.textContent = action === "bin" ? "binning…" : "filing…";
-  }
-  article.dataset.acting = "true";
-  await pause(timing.acting);
   if (state) state.textContent = action === "bin" ? "binned" : "filed";
   article.dataset.done = "true";
   await pause(timing.done);
@@ -493,50 +513,117 @@ async function showDeparture(article, action) {
   await pause(timing.leaving);
 }
 
-document.getElementById("apply").addEventListener("click", async () => {
-  clearFailure();
-  const decisions = [...chosen].map(([id, choice]) => ({
-    id,
-    action: choice.action,
-    override: choice.override,
-    folder: choice.folder,
-  }));
-  if (decisions.length === 0) return;
+/* One message per request, and the page never waits on itself.
+ *
+ * It used to be one request for the whole press: every message moved, in
+ * series, behind a single "Moving…", and only once the last one had landed
+ * did the rows begin their departures — also in series, and also whilst
+ * nothing else was happening. Mail takes seconds per message, so a press of
+ * ten was most of a minute of a page saying nothing, followed by twelve
+ * seconds of animation with nothing left to wait for.
+ *
+ * Now each message is asked for on its own, and the row that has just moved
+ * leaves whilst the next one is already on its way. Two things run at once
+ * deliberately: the moves, which are serial because Mail is, and the
+ * departures, which are chained to each other so they stay in order but are
+ * never waited on before the next request goes out.
+ *
+ * The one thing that must not be split is undo: every message of one press
+ * shares a batch id, so the server writes them all to a single run. */
+async function applyChosen() {
   const apply = document.getElementById("apply");
+  const decisions = [...chosen]
+    .map(([id, choice]) => ({
+      id,
+      action: choice.action,
+      override: choice.override,
+      folder: choice.folder,
+    }))
+    // A skip is a message left alone. Sending it costs a round trip to be
+    // told what we already know.
+    .filter((decision) => decision.action !== "skip");
+  if (decisions.length === 0) return;
+
+  clearFailure();
   apply.disabled = true;
   // The button's disabled state cannot say this: it is also how "nothing is
   // chosen" is shown. Quitting needs to know the difference.
   applying = true;
-  document.getElementById("tally").textContent = "Moving…";
+  const batch = batchId();
+  const tally = document.getElementById("tally");
+
+  let moved = 0;
+  let failed = 0;
+  let corrections = 0;
+  let lastError = null;
+  let departures = Promise.resolve();
+
+  // Whatever happens below, the run must not end with a dead Apply button on
+  // a page that still thinks it is moving mail — 'q' is refused whilst it is.
   try {
-    const result = await api("/api/decisions", {
-      method: "POST",
-      body: JSON.stringify({ decisions }),
-    });
-    // Only the moves that actually happened are shown leaving. A skip stays
-    // exactly where it is, and a failure must not be animated away as though
-    // it had worked.
-    for (const decision of decisions) {
-      if (decision.action === "skip") continue;
+    for (const [index, decision] of decisions.entries()) {
+      tally.textContent =
+        decisions.length === 1
+          ? "Moving…"
+          : `Moving ${index + 1} of ${decisions.length}…`;
       const article = document.querySelector(`.row[data-id="${decision.id}"]`);
-      if (article && result.moved > 0) await showDeparture(article, decision.action);
+      if (article) markActing(article, decision.action);
+      try {
+        const result = await api("/api/decisions", {
+          method: "POST",
+          body: JSON.stringify({ batch, decisions: [decision] }),
+        });
+        moved += result.moved;
+        failed += result.failed;
+        corrections += result.corrections || 0;
+        if (!article) continue;
+        if (result.moved > 0) {
+          // Not awaited: the next message starts moving now. Chained so the
+          // departures still play one after another rather than at once.
+          departures = departures.then(() => showDeparture(article, decision.action));
+        } else {
+          markStalled(article);
+        }
+      } catch (error) {
+        // One message refused is that message's problem; the rest of the
+        // press is still worth carrying out. The reason is reported at the
+        // end, so a failure early on is not scrolled away by what follows.
+        lastError = error;
+        failed += 1;
+        if (article) markStalled(article);
+      }
     }
+
+    await departures;
+    // Reports its own failure, so it is deliberately not wrapped here.
     await load();
-    const bits = [`Moved ${result.moved}`];
-    if (result.failed) bits.push(`${result.failed} failed`);
-    if (result.corrections) {
-      bits.push(
-        `${result.corrections} correction${result.corrections === 1 ? "" : "s"} recorded`
-      );
+    const bits = [`Moved ${moved}`];
+    if (failed) bits.push(`${failed} failed`);
+    if (corrections) {
+      bits.push(`${corrections} correction${corrections === 1 ? "" : "s"} recorded`);
     }
-    document.getElementById("tally").textContent = `${bits.join(" · ")}.`;
-    document.getElementById("undo").hidden = result.moved === 0;
-  } catch (error) {
-    fail(error);
+    tally.textContent = `${bits.join(" · ")}.`;
+    document.getElementById("undo").hidden = moved === 0;
+    if (lastError) fail(lastError);
   } finally {
     applying = false;
     apply.disabled = chosen.size === 0;
   }
+}
+
+/* crypto.randomUUID needs a secure context, and a loopback origin counts as
+ * one by every browser's own rule — but the id only has to be unique within
+ * this process, so there is no reason to fall over if that stops being true. */
+function batchId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+document.getElementById("apply").addEventListener("click", () => {
+  // Never twice at once: a second press mid-batch would interleave two
+  // sequences of requests over the same rows.
+  if (applying) return;
+  applyChosen();
 });
 
 document.getElementById("undo").addEventListener("click", async () => {
