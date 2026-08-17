@@ -174,11 +174,24 @@ def summarise(
             f"  confidence: average {average:.2f}; {confident} of {len(placed)} "
             f"at {threshold:.2f} or above."
         )
-    # Bills come first and get their own heading: the requirement is that an
+    # Security mail leads, above even the bills. Everything else in this
+    # summary can wait until the next run; a breach notice or a sign-in alert
+    # is the one category where the cost is measured in hours, and an
+    # unattended run's output may not be read for a day.
+    security = [item for item in vetoed if item.veto_kind == "security"]
+    # Bills come next and get their own heading: the requirement is that an
     # invoice is *dealt with*, not merely held back, so burying it in a list
     # of ordinary vetoes would miss the point.
     bills = [item for item in vetoed if item.veto_kind == "invoice"]
-    other_vetoes = [item for item in vetoed if item.veto_kind != "invoice"]
+    other_vetoes = [
+        item for item in vetoed if item.veto_kind not in ("invoice", "security")
+    ]
+    if security:
+        lines.append(
+            f"  {len(security)} held back as security-relevant — read these first:"
+        )
+        for item in security:
+            lines.append(held_line(item))
     if bills:
         lines.append(f"  {len(bills)} need dealing with — these look like bills:")
         for item in bills:
@@ -318,21 +331,36 @@ def auto_decisions(proposals: list[Proposal], config: Config) -> list[Decision]:
     rather than ``confidence_threshold``. A veto leaves confidence untouched,
     so a held-back message can perfectly well read 0.99; confidence alone was
     never enough to make this safe.
+
+    ``auto_limit`` then caps how many are returned. Unattended runs are the
+    only ones nobody sees go wrong, so the damage a single one can do is
+    bounded on purpose — and bounded in a way that stays undoable, since the
+    whole capped batch is one journal run.
     """
-    return [
+    accepted = [
         Decision(item, accepted=True)
         for item in proposals
         if item.folder is not None and item.confidence >= config.auto_threshold
     ]
+    # Capped last, and by confidence, so what a bounded run does file is the
+    # mail it was surest about rather than whatever happened to be listed
+    # first. The caller reports the remainder; they are not lost, only left
+    # for the next run.
+    if config.auto_limit and len(accepted) > config.auto_limit:
+        accepted.sort(key=lambda decision: decision.proposal.confidence, reverse=True)
+        return accepted[: config.auto_limit]
+    return accepted
 
 
 def binnable(proposals: list[Proposal]) -> list[Proposal]:
     """Unplaced messages that may be offered for binning.
 
     Everything staying in the inbox qualifies *except* mail held back by an
-    attention veto — flagged, or apparently awaiting a reply — or an invoice
-    veto, since binning a bill is exactly what that rule exists to prevent.
-    Offering to bin
+    attention veto — flagged, or apparently awaiting a reply — an invoice
+    veto, since binning a bill is exactly what that rule exists to prevent,
+    or a security veto, on the same reasoning: a breach notice binned in a
+    batch answer is worse than one filed, because filing at least leaves it
+    somewhere. Offering to bin
     those would defeat the guard that held them back, and more finally than
     filing would have. Mail held back by the deletion veto is included on
     purpose: that veto means "you keep binning this sender", which makes it
@@ -340,7 +368,8 @@ def binnable(proposals: list[Proposal]) -> list[Proposal]:
     """
     return [
         item for item in proposals
-        if not item.is_actionable and item.veto_kind not in ("attention", "invoice")
+        if not item.is_actionable
+        and item.veto_kind not in ("attention", "invoice", "security")
     ]
 
 
@@ -394,16 +423,22 @@ def review_unplaced(proposals: list[Proposal], prompt: Callable[[str], str]) -> 
 
 
 def held_back(proposals: list[Proposal]) -> list[Proposal]:
-    """Messages the attention guard held back, and only those.
+    """Messages the attention and security guards held back.
 
     Deliberately narrower than "everything vetoed". A bill has its own
     handling — the point of that veto is that the invoice gets *dealt with*,
     and quietly filing it here would be the failure it exists to prevent. A
     deletion veto already has an answer in ``review_unplaced``, where binning
     is the natural verb. What is left over is the mail this loop was written
-    for: flagged, or apparently awaiting a reply.
+    for: flagged, apparently awaiting a reply, or security-relevant.
+
+    Security mail belongs here precisely because this loop is the attended
+    case. The guard's whole claim is that such mail must not be filed by a
+    run nobody watched; a person stepping through it one message at a time,
+    reading each reason, is the opposite of that and is where it should be
+    answered.
     """
-    return [item for item in proposals if item.veto_kind == "attention"]
+    return [item for item in proposals if item.veto_kind in ("attention", "security")]
 
 
 def review_held(proposals: list[Proposal], prompt: Callable[[str], str]) -> list[Decision]:
@@ -424,9 +459,14 @@ def review_held(proposals: list[Proposal], prompt: Callable[[str], str]) -> list
     candidates = held_back(proposals)
     if not candidates:
         return []
+    security = sum(1 for item in candidates if item.veto_kind == "security")
+    what = "held back"
+    if security == len(candidates):
+        what = "held back as security-relevant"
+    elif security:
+        what = f"held back ({security} security-relevant)"
     answer = prompt(
-        f"\n{len(candidates)} held back as possibly needing a reply. "
-        "Go through them? [y/N] "
+        f"\n{len(candidates)} {what}. Go through them? [y/N] "
     ).strip().casefold()
     if answer != "y":
         return []

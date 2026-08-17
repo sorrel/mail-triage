@@ -328,8 +328,9 @@ def _permitted(proposal, action: str, override: bool, folder: str | None = None)
       from this sender is only ever binned", so binning is not an override
       at all; it is the obvious answer, and ``guards`` calls such mail "the
       prime candidate" for it.
-    - **An attention or invoice veto** — binning freely, filing only with an
-      explicit per-message ``override``. The guard exists to stop mail being
+    - **An attention, invoice or security veto** — binning freely, filing only
+      with an explicit per-message ``override``. The guard exists to stop mail
+      being
       filed *away* unseen, which is the outcome you cannot notice; binning is
       a decision taken in front of you, undoable from the journal, and is not
       made harder here than it is for any other message. It was once refused

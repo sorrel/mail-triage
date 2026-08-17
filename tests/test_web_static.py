@@ -334,3 +334,12 @@ def test_the_confirmation_can_be_answered_without_a_mouse():
 def test_the_confirmation_arrows_land_on_the_safe_answer_first():
     """From nowhere in particular, leftmost is "Leave it"."""
     assert "const next = at < 0 ? 0 :" in read("app.js")
+
+
+def test_security_mail_asks_before_it_is_filed_from_the_browser():
+    """The browser is a front end over the same guards. Filing security mail
+    away is the outcome the guard exists for, so it asks first — binning does
+    not, on the same terms as any other held message."""
+    source = read("app.js")
+    assert 'proposal.veto_kind === "security"' in source
+    assert "This looks security-relevant. File it away anyway?" in source

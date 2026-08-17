@@ -68,6 +68,12 @@ class Config:
     training_exclusions: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUSIONS))
     confidence_threshold: float = 0.7
     auto_threshold: float = 0.9
+    # The most messages one unattended run will file. A cap rather than a
+    # rate: the point is that a bad model, a bad rule or a surprising influx
+    # costs a bounded number of moves, all in one journal run, undoable with
+    # a single 'mail-triage undo'. An interactive run ignores it — somebody is
+    # there, reading the table, and 'y' means what it says.
+    auto_limit: int = 50
     half_life_days: float = 365.0
     correction_weight: float = 10.0
     # Task 11C: how much of a sender's recent mail must be binned before
@@ -163,8 +169,24 @@ class Config:
         return self.local_dir / "never-personal.json"
 
     @property
+    def security_senders_path(self) -> Path:
+        """Addresses and domains declared security-relevant.
+
+        A third question again, distinct from both ``rules.json`` ("where does
+        this go?") and ``never-personal.json`` ("could a person be writing to
+        me?"). This one asks "would filing this unseen be a problem?", and it
+        holds mail back from unattended runs regardless of the other two.
+        """
+        return self.local_dir / "security-senders.json"
+
+    @property
     def journal_dir(self) -> Path:
         return self.local_dir / "journal"
+
+    @property
+    def auto_runs_dir(self) -> Path:
+        """Where a scheduled run's output is written, one file per day."""
+        return self.local_dir / "auto-runs"
 
 
 def _project_root() -> Path:

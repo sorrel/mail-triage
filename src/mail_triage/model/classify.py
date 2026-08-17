@@ -19,6 +19,7 @@ from mail_triage.guards import is_bulk, needs_attention
 from mail_triage.invoices import invoice_reason
 from mail_triage.model.store import TrainedModel
 from mail_triage.rules import Rule
+from mail_triage.security import security_reason
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ class Classifier:
         rules: dict[str, Rule] | None = None,
         attachments: dict[int, list[str]] | None = None,
         never_personal: frozenset[str] | None = None,
+        security_senders: frozenset[str] | None = None,
     ) -> None:
         self.model = model
         self.config = config
@@ -109,10 +111,44 @@ class Classifier:
         # supply one (see never_personal, which records why Feedback-Id was
         # measured and rejected). Lifts the reply guard alone.
         self.never_personal = never_personal or frozenset()
+        # Addresses and domains the user has declared security-relevant. The
+        # subject vocabulary in ``security`` applies regardless; this is the
+        # layer for senders whose mail matters and whose subjects are bland.
+        self.security_senders = security_senders or frozenset()
 
     def classify(self, message: MessageRow) -> Proposal:
-        """Classify one message, then hold back anything that looks like a bill."""
-        return self._invoice_guard(message, self._classify(message))
+        """Classify one message, then apply the guards that judge the message.
+
+        Both of the guards below run over *every* proposal, placed or not, and
+        both override whatever came before them — including a hard rule, which
+        is about a sender, and these are about this particular message.
+        """
+        proposal = self._invoice_guard(message, self._classify(message))
+        return self._security_guard(message, proposal)
+
+    def _security_guard(self, message: MessageRow, proposal: Proposal) -> Proposal:
+        """Hold back security-relevant mail so no unattended run files it.
+
+        Applied last, so it wins the label when a message trips more than one
+        guard. That is on purpose for the case that actually occurs — an
+        invoice whose subject mentions a verification code — where either
+        veto holds the message and the security reason is the more useful one
+        to read. The *action* is identical either way, so nothing is at stake
+        beyond which sentence appears in the table.
+
+        Unlike the invoice guard, this one carries ``held_folder`` through.
+        The destination is genuinely useful here: security mail is offered in
+        the interactive review, and "file → where it would have gone" is the
+        answer most of it wants once it has been read.
+        """
+        reason = security_reason(message.sender, message.subject, self.security_senders)
+        if reason is None:
+            return proposal
+        return Proposal(
+            proposal.message, None, proposal.confidence, proposal.reason, proposal.stage,
+            veto=reason, veto_kind="security",
+            held_folder=proposal.held_folder or proposal.folder,
+        )
 
     def _invoice_guard(self, message: MessageRow, proposal: Proposal) -> Proposal:
         """Hold back a bill, whatever else was decided about it.

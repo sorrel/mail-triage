@@ -26,10 +26,10 @@ HELP_LINE_WIDTH = 80
 # A command missing from here is not hidden — see ``_grouped``.
 SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Look at what you have", ("accounts", "size")),
-    ("Teach it", ("learn", "rules", "explain")),
+    ("Teach it", ("learn", "rules", "explain", "security")),
     ("File your mail", ("triage", "web")),
     ("Get less of it", ("unsubscribe",)),
-    ("Afterwards", ("runs", "undo")),
+    ("Afterwards", ("runs", "undo", "report")),
 )
 
 OTHER = "Other"
