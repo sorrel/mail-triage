@@ -293,6 +293,16 @@ read.
   now says which binary to add and that the agent is not the terminal.
   The one mercy: it fails safe. No database means no proposals, so a run that
   cannot read moves nothing.
+  **Which binary gets the grant is a real decision, not a formality.** The
+  obvious one is `uv`, and granting Full Disk Access to `/opt/homebrew/bin/uv`
+  hands it to every project `uv run` launches — every sibling under
+  `scripts/`, health-adjacent ones included. `contrib/dedicated-interpreter.sh`
+  copies the interpreter to `.venv/bin/mail-triage-python` so the grant covers
+  this venv alone; the copy needs `libpython*.dylib` symlinked into
+  `.venv/lib/` (it loads `@executable_path/../lib/`) and must live in
+  `.venv/bin/` so CPython finds `pyvenv.cfg` one level up and resolves this
+  venv's site-packages. `uv sync` may take it with it, hence a re-runnable
+  script rather than a one-off.
 - **A batch that reports only at the end looks stalled, and then wastes the
   time it saved.** The browser's Apply sent every decision in one request:
   Mail moves one message at a time and takes seconds over each, so a press of
