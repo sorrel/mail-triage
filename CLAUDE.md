@@ -274,6 +274,25 @@ read.
   which is a question about the mailbox, not the word list, so it was
   measured rather than argued: **178 of 13,993 filed messages, 1.3%**, with no
   single term running away and a tail of individual CVEs.
+- **`launchctl load` succeeding says nothing about whether the job can do its
+  work.** The agent registered perfectly on 17 August 2026 — right program,
+  right working directory, both calendar intervals, `state = not running` as
+  intended. It would still have failed at 08:30 every morning:
+  `PermissionError: Operation not permitted` on `Envelope Index-wal`. macOS
+  grants Full Disk Access per *responsible binary*, and a LaunchAgent's
+  responsible binary is its own program, not the terminal that had been
+  reading that database for months. The terminal having the grant does not
+  give it to the agent.
+  Two things follow. **Kickstart a scheduled job rather than waiting for it**
+  — with `--dry-run` swapped in and no `StartCalendarInterval`, under a
+  separate label so the real agent is never in a half-configured state; that
+  is how this was found, and it cost one minute instead of one morning. And
+  the failure surfaced as a **bare traceback into a log nobody opens**, since
+  `triage`/`web`/`report` caught only `InputError` around `gather` whilst
+  `accounts` and `size` had handled `PermissionError` all along. `_no_disk_access`
+  now says which binary to add and that the agent is not the terminal.
+  The one mercy: it fails safe. No database means no proposals, so a run that
+  cannot read moves nothing.
 - **A batch that reports only at the end looks stalled, and then wastes the
   time it saved.** The browser's Apply sent every decision in one request:
   Mail moves one message at a time and takes seconds over each, so a press of

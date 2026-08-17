@@ -153,3 +153,38 @@ def test_the_empty_list_still_explains_the_vocabulary(tmp_path, monkeypatch):
     monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
     output = CliRunner().invoke(cli, ["security"]).output
     assert "subject vocabulary still applies" in output
+
+
+# --- Full Disk Access under launchd -----------------------------------------
+
+def test_a_database_it_cannot_read_says_what_to_do(tmp_path, monkeypatch):
+    """The failure a scheduled run actually hits.
+
+    TCC grants Full Disk Access per binary, and a LaunchAgent's binary is not
+    the terminal that has been reading this database for months. Proved live
+    on 17 August 2026 by kickstarting a test agent: PermissionError on
+    'Envelope Index-wal', raised as a bare traceback into a log nobody opens.
+    """
+    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    monkeypatch.setattr(
+        cli_module, "load_model", lambda path: _ANY_MODEL
+    )
+    def refuse(*args, **kwargs):
+        raise PermissionError(1, "Operation not permitted", "Envelope Index-wal")
+    monkeypatch.setattr(cli_module, "gather", refuse)
+    result = CliRunner().invoke(cli, ["triage", "--dry-run"])
+    assert result.exit_code != 0
+    assert "Full Disk Access" in result.output
+    # The launchd twist named explicitly: without it the message sends you to
+    # check the terminal, which already has the access and is not the problem.
+    assert "not your terminal" in result.output
+    assert "ProgramArguments" in result.output
+
+
+class _AnyModel:
+    """Stands in for a trained model so the run reaches ``gather``."""
+    sender = None
+    tokens = None
+
+
+_ANY_MODEL = _AnyModel()
