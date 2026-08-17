@@ -35,6 +35,11 @@ Nothing is filed away when:
   notices stay in the inbox and are listed separately, because the point of a
   bill is that it needs dealing with. This outranks every other instruction,
   including an explicit "file everything from this sender" rule.
+- **It looks security-relevant** — a sign-in alert, a breach notice, a CVE, a
+  verification code — and the run is unattended. These are held back from
+  `--auto` however confident the classifier was, because they are precisely
+  the mail it is *most* confident about and precisely the mail you cannot
+  afford to find a week later.
 - **The classifier is not confident enough**, or two folders fit nearly as
   well as each other.
 - **You have been deleting that sender's mail lately** rather than filing it.
@@ -117,9 +122,51 @@ reverse it.
 `triage --auto` skips all of that and files everything at or above
 `auto_threshold` (0.9 by default). It only ever files: it never bins, and
 never touches mail a guard held back — flagged, apparently awaiting a reply,
-or carrying a bill — however confident the classifier was about it. The run is
-journalled like any other, so `mail-triage undo` reverses it in full. Worth
-running `triage --dry-run` first to see what it would do.
+carrying a bill, or security-relevant — however confident the classifier was
+about it. It files at most `auto_limit` messages (50 by default), so a single
+unattended run can go wrong only so far. The run is journalled like any other,
+so `mail-triage undo` reverses it in full. Worth running `triage --dry-run`
+first to see what it would do.
+
+### Unattended runs, and the security guard
+
+Auto mode is safe against doing the wrong thing. What it cannot protect
+against on its own is the *right* thing done to mail that wanted your eyes:
+filed correctly, quietly, at half past eight, by a process nobody watched.
+
+Security mail is where that bites. The reply guard settles a sign-in alert or
+a Dependabot notice as bulk from the address alone — correctly, since nobody
+is awaiting a reply to one — so it never holds them back. And they are exactly
+the senders auto mode is surest about: high-volume, consistent, with a long
+filing history behind them. A breach notification reads 0.97 and files itself.
+
+So there is a separate guard. Security-relevant mail is **never filed by an
+unattended run**, whatever the confidence and whatever rule names the sender;
+it stays in the inbox and is offered normally in an interactive run, where
+somebody is there to read it. Two layers decide: a subject vocabulary that
+always applies, and any sender you declare yourself.
+
+```bash
+mail-triage security                     # what you have declared
+mail-triage security --add alerts@vendor.example
+mail-triage security --add vendor.example   # a domain covers its subdomains
+mail-triage security --measure           # what share of your history it holds
+```
+
+`--measure` is worth running before trusting it: the guard is written
+deliberately broadly, because a false positive here costs one message filed by
+hand whilst a false negative files a breach notice away silently. What that
+does *not* license is a guard so broad that auto mode stops being useful, and
+that is a question about your mailbox rather than about the word list.
+
+To schedule the runs, `contrib/com.mail-triage.auto.plist` is a LaunchAgent
+template. It is a template on purpose — the tool never installs it. Fill in
+the two paths, copy it to `~/Library/LaunchAgents/`, and `launchctl load` it
+yourself.
+
+Then `mail-triage report` is the thing worth reading afterwards. It leads with
+what the security guard held, in full and by subject, and counts everything
+else — because a filing that went where it always goes is not news.
 
 ### Commands
 
@@ -143,6 +190,12 @@ running `triage --dry-run` first to see what it would do.
 | `rules` | List the answers you have given about senders |
 | `rules --forget <sender>` | Remove one sender's rule |
 | `rules --never-personal <sender>` | Vouch that a sender never awaits a reply |
+| `security` | List the senders declared security-relevant |
+| `security --add <sender\|domain>` | Never file this sender's mail unattended |
+| `security --forget <sender\|domain>` | Withdraw a declaration |
+| `security --measure` | What share of your history the guard would hold |
+| `report` | What the unattended runs did, security first |
+| `report --since N` | Read the last N days of run journals |
 | `rules --forget-never-personal <sender>` | Withdraw that |
 | `explain <sender>` | Show why that sender's mail goes where it does |
 | `unsubscribe` | List lists worth leaving; unsubscribe from the ones you pick |

@@ -293,6 +293,9 @@ function picker(proposal, article) {
 function confirmationFor(proposal) {
   if (!proposal.veto) return null;
   if (proposal.veto_kind === "deletion") return null;
+  if (proposal.veto_kind === "security") {
+    return "This looks security-relevant. File it away anyway?";
+  }
   return proposal.veto_kind === "invoice"
     ? "This looks like a bill. File it away anyway?"
     : "This may be waiting on a reply from you. File it away anyway?";

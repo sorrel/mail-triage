@@ -44,6 +44,7 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `model/tokens.py` | Stage B: naive Bayes over subject tokens |
 | `model/classify.py` | Stage orchestration, guards, precedence |
 | `guards.py` | Do-not-file: flagged, or may need a reply |
+| `security.py` | Do-not-file-unattended: security-relevant mail |
 | `never_personal.py` | Senders vouched for as never awaiting a reply |
 | `invoices.py` | Bill detection |
 | `rules.py` | Hard per-sender rules |
@@ -57,6 +58,7 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `sends.py` | What was actually sent, so a bounce can be matched against it |
 | `bounces.py` | Did the request land? Identify, attribute, report |
 | `journal.py` | Run journal and undo |
+| `report.py` | What the unattended runs did, security first |
 | `sizes.py` | Measure disk and envelope size per mailbox |
 | `size_report.py` | Render the size grids |
 | `mail_app.py` | AppleScript bridge, plus `FakeMail` for tests |
@@ -80,12 +82,19 @@ passed in: only the message knows which inbox it came from.
 
 Highest first. Get this wrong and mail is filed contrary to instructions.
 
-1. Per-message guards (a bill, flagged, may need a reply)
+1. Per-message guards (security-relevant, a bill, flagged, may need a reply)
 2. Hard rules (file / bin / leave alone)
 3. The deletion veto
 4. Stage A, then stage B
 
 A rule is about a *sender*; a guard is about a *message*. Messages win.
+
+The security guard is applied outermost, so it wins the *label* when a
+message trips more than one. Only the label — every one of these holds the
+message, so nothing is at stake but which sentence is printed. It is also the
+only guard that carries `held_folder` through, because filing security mail
+where it would have gone is the answer most of it wants once it has been
+read.
 
 ### Things learnt the hard way
 
@@ -241,6 +250,30 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   label clear was attempted and looked right, not that the server agreed.
   Filing is not yet idempotent: if a label survives anyway, the next run
   files a second copy.
+- **The guards protect against the wrong action; they had nothing to say
+  about the right action taken unwatched.** Auto mode never bins, never
+  touches vetoed mail and is fully undoable — a good envelope, and beside the
+  point for its actual failure, which is filing something *correctly* and
+  quietly that wanted eyes on it. Measured on 17 August 2026: a Dependabot
+  alert, a new-sign-in notice, a root-account-accessed warning and a breach
+  notification were each put through `needs_attention` with a
+  `List-Unsubscribe` header supplied, and **not one was held**. The reason is
+  structural — `_NO_REPLY_WORDS` contains "notifications" and "noreply", so
+  `is_bulk` settles them from the address alone and the function returns
+  before a header is read. That is the right answer to the question the reply
+  guard asks; nobody awaits a reply to a Dependabot alert. It is simply not
+  the only question. And these are the senders auto mode is *most* sure
+  about: high volume, consistent, long filing history, so a breach notice
+  reads 0.97 and files itself. Hence `security.py`.
+  Two things worth keeping straight about it. **The asymmetry runs opposite
+  to the reply guard's**, which is what licenses a broader rule: there a
+  false negative loses a message wanting an answer, so it is narrow and fails
+  safe by holding back; here *both* directions fail into the inbox, so a
+  false positive costs one message filed by hand and a false negative loses a
+  breach notice. And the limit on that generosity is usefulness, not safety —
+  which is a question about the mailbox, not the word list, so it was
+  measured rather than argued: **178 of 13,993 filed messages, 1.3%**, with no
+  single term running away and a tail of individual CVEs.
 - **A batch that reports only at the end looks stalled, and then wastes the
   time it saved.** The browser's Apply sent every decision in one request:
   Mail moves one message at a time and takes seconds over each, so a press of

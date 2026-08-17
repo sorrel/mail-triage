@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A scheduled unattended triage run.
+
+  THIS FILE IS A TEMPLATE AND IS NOT INSTALLED BY THE TOOL. Replace the two
+  __PLACEHOLDER__ values, copy it to ~/Library/LaunchAgents/, and load it
+  yourself:
+
+      cp contrib/com.mail-triage.auto.plist ~/Library/LaunchAgents/
+      # edit the paths
+      launchctl load ~/Library/LaunchAgents/com.mail-triage.auto.plist
+
+  To stop:
+
+      launchctl unload ~/Library/LaunchAgents/com.mail-triage.auto.plist
+
+  A LaunchAgent rather than cron, and rather than a daemon: this must run as
+  the logged-in user with Apple Mail running, which is what an agent gets and
+  a daemon does not. The design spec is explicit that this tool is not a
+  daemon; a twice-daily agent is a frequency, not a residency.
+
+  What the run may do, and why that is acceptable unattended:
+
+  - It files. It never bins, never sends, and never touches mail a guard held
+    back — including anything security-relevant, which is the guard written
+    for exactly this situation.
+  - It files at most `auto_limit` messages (default 50), so a bad model or a
+    surprising influx costs a bounded number of moves.
+  - Every move is journalled before it happens, and the whole run is one
+    journal entry set: `mail-triage undo` reverses it completely.
+  - Output goes to local/auto-runs/. `mail-triage report` is the thing
+    actually worth reading, and it leads with what was held back.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mail-triage.auto</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Absolute paths: a LaunchAgent gets almost none of your shell's
+             environment, so "uv" and "mail-triage" are not on its PATH. -->
+        <string>__UV_PATH__</string>
+        <string>run</string>
+        <string>--project</string>
+        <string>__PROJECT_PATH__</string>
+        <string>mail-triage</string>
+        <string>triage</string>
+        <string>--auto</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_PATH__</string>
+
+    <!-- Twice daily. Not more: each run costs an AppleScript round trip per
+         message whose headers the reply guard needs, and nothing about an
+         inbox rewards checking it every hour. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>18</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+    </array>
+
+    <!-- Appended to, not truncated, so a run that goes wrong leaves evidence
+         a later run cannot erase. Rotate by hand or leave it; the file is
+         small. -->
+    <key>StandardOutPath</key>
+    <string>__PROJECT_PATH__/local/auto-runs/auto.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_PATH__/local/auto-runs/auto.log</string>
+
+    <!-- Deliberately absent: RunAtLoad. Loading the agent should not move
+         mail there and then — the first run being a surprise is exactly the
+         wrong introduction to a scheduled mail mover. -->
+</dict>
+</plist>
