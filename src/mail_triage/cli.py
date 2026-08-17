@@ -258,32 +258,20 @@ def learn(drift: bool) -> None:
 def _no_disk_access(error: PermissionError) -> click.ClickException:
     """Turn "Operation not permitted" into the thing to actually go and do.
 
-    Mail's database is protected by TCC, so reading it needs Full Disk Access.
-    Interactively that is a one-off: the terminal has it or it does not, and
-    the traceback at least names a path under ``~/Library/Mail``.
+    Mail's database is TCC-protected, so reading it needs Full Disk Access for
+    whichever terminal you are running in. Without this the failure arrives as
+    a bare traceback from deep inside ``snapshot_database`` — ``accounts`` and
+    ``size`` had handled it all along, whilst ``triage``, ``web`` and
+    ``report`` did not.
 
-    Under launchd it is baffling, which is why this message says so out loud.
-    TCC attributes access to the *responsible* binary, and for a LaunchAgent
-    that is the agent's own program — not the terminal that has been reading
-    this database happily for months. So a scheduled run fails with
-    ``Operation not permitted`` on a file the same user can plainly read, and
-    it fails into a log nobody opens. Proved on 17 August 2026 by kickstarting
-    a test agent rather than waiting to find out at half past eight.
-
-    The failure is at least a safe one: no database means no proposals, so a
-    run that cannot read moves nothing.
+    It fails safe: no database means no proposals, so a run that cannot read
+    moves nothing.
     """
     return click.ClickException(
         f"Cannot read Mail's database ({error.filename or 'Envelope Index'}): "
         "operation not permitted.\n\n"
         "This needs Full Disk Access. In System Settings → Privacy & Security "
-        "→ Full Disk Access, add whichever binary is running mail-triage.\n\n"
-        "If this was a scheduled run, note that the agent is not your "
-        "terminal: macOS grants Full Disk Access per binary, so the terminal "
-        "having it does not give it to the LaunchAgent's program. Add that "
-        "program — the first string in the plist's ProgramArguments — and "
-        "kickstart the agent to check, rather than waiting for its next "
-        "scheduled run."
+        "→ Full Disk Access, add the terminal you are running mail-triage in."
     )
 
 

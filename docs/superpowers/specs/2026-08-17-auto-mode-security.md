@@ -112,20 +112,34 @@ Three layers, in order of authority.
 - It does not override flagging, which stays absolute.
 - It does not change interactive `triage` at all beyond showing the reason.
 
-## Scheduling
+## Scheduling — built, then removed the same day
 
-A `launchd` job, because this must run as the logged-in user with Apple Mail
-open and cron gives no useful control over that.
+A launchd agent was specified here, built, installed and tested. It is gone,
+and the reversal is the more useful record.
 
-- Template at `contrib/com.mail-triage.auto.plist` with placeholders — the
-  real plist is written to `~/Library/LaunchAgents/` by hand.
-- `StartCalendarInterval` twice daily. A frequency, not a daemon: the design
-  spec is explicit that this tool is not one.
-- `stdout`/`stderr` to `local/auto-runs/YYYY-MM-DD.log`.
-- **Installed by the user, never by the tool.** The repository's second
-  safety rule covers moving real mail without approval, and a schedule that
-  moves mail unattended for ever is the largest version of that. The spec
-  produces a file and a `launchctl load` line; it does not run it.
+It worked as designed and would still have failed every morning: macOS grants
+Full Disk Access per responsible binary, so the agent — not being the terminal
+that had held that grant for months — hit `PermissionError` on
+`Envelope Index-wal`. Found by kickstarting a `--dry-run` copy under a separate
+label rather than waiting for 08:30.
+
+That bug was fixable. The permission was not. There is no TCC grant narrower
+than Full Disk Access covering `~/Library/Mail`, so any unattended runner holds
+blanket disk read permanently. Pointing it at a project-specific Python
+interpreter narrowed blast radius across *projects* whilst doing nothing about
+blast radius across *dependencies* — every package in the venv would execute
+unattended with full disk read, which is the worse exposure and the one that
+was initially presented as an improvement.
+
+The user's judgement, and the right one: not a secure way of doing things for
+the sake of saving a command. `--auto` remains, invoked by hand from a terminal
+that already has the grant.
+
+If this is revisited, the prerequisite is reading Mail without the database —
+Apple Events automation is a far narrower grant. The blocker is the folder
+list: AppleScript returns flat leaf names and loses the nested paths filing
+depends on. The inbox read would be trivial; the 75-day deletion index would
+not.
 
 ## The regular part
 
@@ -138,9 +152,8 @@ run journals and prints:
 - what the other guards held, counted;
 - anything that failed to move.
 
-Run it on demand, and from the same launchd job on a weekly cadence so the
-held-back security mail is put in front of him whether or not he thinks to
-look.
+Run it on demand. It was to have run on a weekly cadence from the same
+scheduled job; with that gone, it is a command like any other.
 
 ## Bounding an unattended run
 
@@ -213,7 +226,6 @@ doing all the work. The vocabulary stands as written.
 - `report.py` and `mail-triage report` — the regular part.
 - `mail-triage security --add / --forget / --measure`.
 - `auto_limit` (default 50), enforced in `auto_decisions`, reported by `--auto`.
-- `contrib/com.mail-triage.auto.plist` — the template, not installed.
 - 57 tests across `test_security.py`, `test_report.py`, `test_cli_security.py`.
 
 Both open questions were left at their defaults: twice daily, and the report

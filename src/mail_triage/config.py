@@ -183,10 +183,6 @@ class Config:
     def journal_dir(self) -> Path:
         return self.local_dir / "journal"
 
-    @property
-    def auto_runs_dir(self) -> Path:
-        """Where a scheduled run's output is written, one file per day."""
-        return self.local_dir / "auto-runs"
 
 
 def _project_root() -> Path:
