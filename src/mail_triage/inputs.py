@@ -13,14 +13,13 @@ returned. Nothing here writes, and nothing here talks to Mail.
 
 from __future__ import annotations
 
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from mail_triage.asking import build_ranking_inputs
 from mail_triage.config import Config, Source
 from mail_triage.deletion import PerAccountDeletionIndex, build_deletion_index
-from mail_triage.envelope import DEFAULT_DB_PATH, EnvelopeReader, MessageRow, snapshot_database
+from mail_triage.envelope import DEFAULT_DB_PATH, MessageRow, open_snapshot
 from mail_triage.folders import folder_path
 
 
@@ -77,43 +76,39 @@ def gather(
     ``db_path`` is a parameter rather than a module lookup so a caller — or a
     test — can point the run at a different database explicitly.
     """
-    with tempfile.TemporaryDirectory() as work:
-        reader = EnvelopeReader(snapshot_database(db_path, Path(work)))
-        try:
-            mailbox_urls = reader.mailbox_urls()
-            messages: list[MessageRow] = []
-            indices: dict[str, dict] = {}
-            source_folders: dict[str, set[str]] = {}
-            for source in sources:
-                # inbox_messages, not messages_in_mailbox: a Gmail inbox is a
-                # label, so filtering on the mailbox URL alone finds nothing.
-                messages.extend(reader.inbox_messages(_inbox_url(mailbox_urls, source)))
-                # Built from this same open reader, not a second one: filing
-                # and deletion counts must come from identical data or the
-                # same-window guarantee is meaningless. One index per account,
-                # because habits differ between them.
-                indices[source.prefix] = build_deletion_index(reader, config, source)
-                source_folders[source.prefix] = {
-                    folder_path(url).casefold()
-                    for url in mailbox_urls
-                    if url.startswith(source.prefix) and folder_path(url)
-                }
-            folders = [
-                folder_path(url)
+    with open_snapshot(db_path) as reader:
+        mailbox_urls = reader.mailbox_urls()
+        messages: list[MessageRow] = []
+        indices: dict[str, dict] = {}
+        source_folders: dict[str, set[str]] = {}
+        for source in sources:
+            # inbox_messages, not messages_in_mailbox: a Gmail inbox is a
+            # label, so filtering on the mailbox URL alone finds nothing.
+            messages.extend(reader.inbox_messages(_inbox_url(mailbox_urls, source)))
+            # Built from this same open reader, not a second one: filing
+            # and deletion counts must come from identical data or the
+            # same-window guarantee is meaningless. One index per account,
+            # because habits differ between them.
+            indices[source.prefix] = build_deletion_index(reader, config, source)
+            source_folders[source.prefix] = {
+                folder_path(url).casefold()
                 for url in mailbox_urls
-                if url.startswith(config.filing_account_prefix) and folder_path(url)
-            ]
-            # Scoped to the inbox rather than the whole table: the invoice
-            # guard only ever asks about a message it is about to file.
-            attachments = reader.attachment_names(m.rowid for m in messages)
-            # How often each sender writes, not how many of their messages are
-            # in today's inbox; and which of them send bills, who are never
-            # offered the bin answer. Both from a single scan.
-            yearly_counts, billing_senders = (
-                build_ranking_inputs(reader, config) if ask else ({}, set())
-            )
-        finally:
-            reader.close()
+                if url.startswith(source.prefix) and folder_path(url)
+            }
+        folders = [
+            folder_path(url)
+            for url in mailbox_urls
+            if url.startswith(config.filing_account_prefix) and folder_path(url)
+        ]
+        # Scoped to the inbox rather than the whole table: the invoice
+        # guard only ever asks about a message it is about to file.
+        attachments = reader.attachment_names(m.rowid for m in messages)
+        # How often each sender writes, not how many of their messages are
+        # in today's inbox; and which of them send bills, who are never
+        # offered the bin answer. Both from a single scan.
+        yearly_counts, billing_senders = (
+            build_ranking_inputs(reader, config) if ask else ({}, set())
+        )
 
     return TriageInputs(
         messages=messages,
