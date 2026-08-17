@@ -81,6 +81,11 @@ class Router:
         self._batch_id = None
         # One Apply at a time. See _decisions.
         self._applying = threading.Lock()
+        # The press currently being applied, and the run it writes to. See
+        # _run_for: the page sends one message per request now, and undo is
+        # about the press rather than the message.
+        self._apply_batch: str | None = None
+        self._apply_run: tuple[Journal, str] | None = None
 
     # --- routing ----------------------------------------------------------
 
@@ -167,9 +172,7 @@ class Router:
         # history. Same call the terminal makes, for the same reason.
         corrected = record_overrides(decisions, self.config)
 
-        journal = Journal(self.config)
-        run_id = new_run_id()
-        journal.begin(run_id)
+        journal, run_id = self._run_for(payload.get("batch"))
         # Claimed before the moves, not after. If this process dies mid-batch
         # the messages are marked as dealt with and the journal says exactly
         # what was attempted; marking afterwards leaves a window in which the
@@ -180,6 +183,33 @@ class Router:
         payload = outcome_payload(moved, failed, run_id)
         payload["corrections"] = corrected
         return Response.json(payload)
+
+    def _run_for(self, batch) -> tuple[Journal, str]:
+        """The journal and run id this request's moves belong to.
+
+        The page applies one message per request, so that a row can finish
+        leaving the screen whilst the next message is already moving —
+        Mail takes seconds per message, and a batch that reported nothing
+        until the last one had gone was the whole of the wait.
+
+        Undo, though, is about the press and not the message. Every message
+        of one press has to land in one run, or "Undo" would put back only
+        whichever went last. So the page names its press with an opaque
+        batch id: the same id continues the run it started, and anything
+        else starts a new one.
+
+        A request with no batch id gets a run to itself, which is the
+        behaviour every other client has always had.
+        """
+        if isinstance(batch, str) and batch and batch == self._apply_batch:
+            if self._apply_run is not None:
+                return self._apply_run
+        journal = Journal(self.config)
+        run_id = new_run_id()
+        journal.begin(run_id)
+        self._apply_batch = batch if isinstance(batch, str) and batch else None
+        self._apply_run = (journal, run_id)
+        return journal, run_id
 
     def _undo(self) -> Response:
         if not self.session.run_id:

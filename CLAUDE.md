@@ -241,6 +241,20 @@ A rule is about a *sender*; a guard is about a *message*. Messages win.
   label clear was attempted and looked right, not that the server agreed.
   Filing is not yet idempotent: if a label survives anyway, the next run
   files a second copy.
+- **A batch that reports only at the end looks stalled, and then wastes the
+  time it saved.** The browser's Apply sent every decision in one request:
+  Mail moves one message at a time and takes seconds over each, so a press of
+  ten was most of a minute behind an unchanging "Moving…" — and only *then*
+  did the rows begin their departures, one after another, whilst there was
+  nothing left to wait for. The animation had been designed to be watched and
+  was instead a second queue after the first. It is now a request per message,
+  with the row's word ("filing…") up whilst that message is actually moving,
+  and each departure chained to the last but never awaited before the next
+  request goes out — so the only serial thing is the part that has to be.
+  The catch worth knowing: undo is about the *press*, not the message, so the
+  page sends a batch id and `Router._run_for` keeps one journal run for the
+  lot. Splitting the request without that would have left Undo putting back
+  only whichever message happened to go last.
 - **Binding to 127.0.0.1 does not stop a web page from reaching the server.**
   DNS rebinding resolves an attacker's hostname to 127.0.0.1, and their page is
   then same-origin with ours. The strict `Host` check in `web/security.py` is

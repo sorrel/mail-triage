@@ -196,6 +196,7 @@ main { max-width: var(--measure); margin: 0 auto; }
 .state[data-action="file"] { color: var(--file); }
 .state[data-action="bin"] { color: var(--bin); }
 .state[data-action="skip"] { color: var(--ink-soft); }
+.state[data-action="failed"] { color: var(--bin); }
 
 .row-actions {
   grid-column: 1 / -1;
@@ -261,7 +262,13 @@ main { max-width: var(--measure); margin: 0 auto; }
 
 /* --- applying, made visible ---------------------------------------------- */
 
+/* The row being moved right now. One at a time, because Mail moves one at a
+ * time, and the tint is how you can see which. */
 .row[data-acting] { background: var(--tint); }
+
+/* A message that did not move. It stays on the page, undimmed and marked —
+ * the one thing worse than a failure is a failure that leaves no trace. */
+.row[data-stalled] { border-left: 2px solid var(--bin); }
 
 /* Filed mail leaves slowly and visibly: it fades, drifts, and the gap it
  * left closes up. Fast enough not to be a wait, slow enough to be watched —

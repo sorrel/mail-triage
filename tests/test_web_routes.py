@@ -198,6 +198,60 @@ def test_a_body_that_is_not_json_is_refused(tmp_path):
     assert router.handle(request).status == 400
 
 
+# --- one press, one run -----------------------------------------------------
+
+def apply_one(router, identifier, batch=None, action="file"):
+    body = {"decisions": [{"id": identifier, "action": action}]}
+    if batch is not None:
+        body["batch"] = batch
+    return json.loads(
+        router.handle(api("/api/decisions", method="POST", payload=body)).body
+    )
+
+
+def test_one_batch_of_requests_is_one_run(tmp_path):
+    """The page applies a message per request so a row can leave the screen
+    whilst the next is still moving. Undo is about the press, though, so all
+    of a press's messages must land in a single run."""
+    mail = fake_mail(rowids=(1, 2, 3))
+    router, session = build(
+        tmp_path, proposals=[proposal(rowid=n) for n in (1, 2, 3)], mail=mail
+    )
+    runs = [
+        apply_one(router, identifier, batch="press-1")["run_id"]
+        for identifier in list(session.entries)
+    ]
+    assert len(set(runs)) == 1
+    assert len(mail.moved) == 3
+    reversed_count = json.loads(
+        router.handle(api("/api/undo", method="POST", payload={})).body
+    )["reversed"]
+    assert reversed_count == 3
+
+
+def test_a_different_batch_is_a_different_run(tmp_path):
+    """Two presses are two runs, so undo puts back the second and not both."""
+    mail = fake_mail(rowids=(1, 2))
+    router, session = build(
+        tmp_path, proposals=[proposal(rowid=n) for n in (1, 2)], mail=mail
+    )
+    first, second = list(session.entries)
+    assert (
+        apply_one(router, first, batch="press-1")["run_id"]
+        != apply_one(router, second, batch="press-2")["run_id"]
+    )
+
+
+def test_a_request_naming_no_batch_gets_a_run_to_itself(tmp_path):
+    """Every other client — the tests, anything scripted — is unchanged."""
+    mail = fake_mail(rowids=(1, 2))
+    router, session = build(
+        tmp_path, proposals=[proposal(rowid=n) for n in (1, 2)], mail=mail
+    )
+    first, second = list(session.entries)
+    assert apply_one(router, first)["run_id"] != apply_one(router, second)["run_id"]
+
+
 # --- undo -------------------------------------------------------------------
 
 def test_undo_reverses_the_run_this_server_made(tmp_path):

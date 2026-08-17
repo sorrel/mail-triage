@@ -206,6 +206,33 @@ def test_applying_shows_each_message_leaving():
     assert "data-leaving" in read("app.css")
 
 
+def test_applying_asks_for_one_message_at_a_time():
+    """A press of ten used to be one request: nothing on the page changed
+    until the last message had moved, and only then did the rows start
+    leaving. Now each message is asked for on its own, so the word on the row
+    is up whilst Mail is working on it."""
+    source = read("app.js")
+    assert "body: JSON.stringify({ batch, decisions: [decision] })" in source
+    assert "if (article) markActing(article, decision.action);" in source
+
+
+def test_a_row_leaving_never_holds_up_the_next_message():
+    """The departures are chained to each other so they stay in order, and
+    awaited once at the end — never inside the loop, which is what made the
+    animation additive with the moves rather than concurrent with them."""
+    source = read("app.js")
+    assert "departures = departures.then(() => showDeparture(" in source
+    assert "await showDeparture" not in source
+    assert "await departures;" in source
+
+
+def test_a_message_that_did_not_move_stays_and_says_so():
+    source = read("app.js")
+    assert "function markStalled" in source
+    assert '"did not move"' in source
+    assert "data-stalled" in read("app.css")
+
+
 def test_the_departure_animation_respects_reduced_motion():
     source = read("app.js")
     assert 'matchMedia("(prefers-reduced-motion: reduce)")' in source
