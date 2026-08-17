@@ -6,9 +6,15 @@
   __PLACEHOLDER__ values, copy it to ~/Library/LaunchAgents/, and load it
   yourself:
 
+      ./contrib/dedicated-interpreter.sh     # builds the binary below
       cp contrib/com.mail-triage.auto.plist ~/Library/LaunchAgents/
-      # edit the paths
+      # edit __PROJECT_PATH__
       launchctl load ~/Library/LaunchAgents/com.mail-triage.auto.plist
+
+  Then grant Full Disk Access to the interpreter named below, and check it
+  works — a loaded agent that cannot read the database fails every morning
+  into a log nobody opens. See the README for how to check without waiting
+  for the schedule or moving any mail.
 
   To stop:
 
@@ -36,15 +42,22 @@
     <key>Label</key>
     <string>com.mail-triage.auto</string>
 
+    <!-- Absolute paths: a LaunchAgent gets almost none of your shell's
+         environment, so nothing here is on its PATH.
+
+         Deliberately NOT "uv run". macOS grants Full Disk Access per binary,
+         and this job needs it to read Mail's database — so pointing at uv
+         would mean granting Full Disk Access to every project uv ever runs.
+         contrib/dedicated-interpreter.sh builds an interpreter this project
+         alone uses, so the grant covers this and nothing else.
+
+         The trade: uv is no longer syncing dependencies at run time, so run
+         'uv sync' yourself after changing them — and re-run the script, since
+         a rebuilt venv takes the copy with it. -->
     <key>ProgramArguments</key>
     <array>
-        <!-- Absolute paths: a LaunchAgent gets almost none of your shell's
-             environment, so "uv" and "mail-triage" are not on its PATH. -->
-        <string>__UV_PATH__</string>
-        <string>run</string>
-        <string>--project</string>
-        <string>__PROJECT_PATH__</string>
-        <string>mail-triage</string>
+        <string>__PROJECT_PATH__/.venv/bin/mail-triage-python</string>
+        <string>__PROJECT_PATH__/.venv/bin/mail-triage</string>
         <string>triage</string>
         <string>--auto</string>
     </array>
