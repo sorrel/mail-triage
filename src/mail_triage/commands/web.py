@@ -55,7 +55,7 @@ def web(port: int, open_browser: bool, source_names: tuple[str, ...]) -> None:
         config=config,
         mail=mail,
         accounts={source.prefix: source.name for source in sources},
-        static_dir=Path(__file__).parent / "web" / "static",
+        static_dir=Path(__file__).parent.parent / "web" / "static",
         token=secrets.token_urlsafe(32),
         port=port,
         folders=inputs.folders,
