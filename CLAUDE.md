@@ -42,6 +42,7 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `corpus.py` | Filing history into recency-weighted training examples |
 | `model/sender.py` | Stage A: sender and domain → folder |
 | `model/tokens.py` | Stage B: naive Bayes over subject tokens |
+| `pipeline.py` | Config in, proposals out — the run every entry point shares |
 | `model/classify.py` | Stage orchestration, guards, precedence |
 | `guards.py` | Do-not-file: flagged, or may need a reply |
 | `security.py` | Do-not-file-unattended: security-relevant mail |
@@ -67,6 +68,14 @@ looks convincingly like a bug). Writes go through `osascript`.
 | `web/server.py` | The loopback socket, and the interface's lifetime |
 | `web/session.py` | A run's proposals under opaque ids |
 | `web/payloads.py` | What the browser is told, and what it is not |
+| `cli.py` | The group, and what is registered on it. Nothing else |
+| `commands/_shared.py` | Pieces more than one command needs |
+| `commands/inspect.py` | `accounts`, `size` |
+| `commands/teach.py` | `learn`, `rules`, `explain`, `security` |
+| `commands/triage.py` | `triage`, and the loops it runs |
+| `commands/unsubscribe.py` | `unsubscribe`, and the bounce check |
+| `commands/journal.py` | `undo`, `runs`, `report` |
+| `commands/web.py` | The browser interface |
 
 ### Several accounts
 
@@ -274,6 +283,22 @@ read.
   which is a question about the mailbox, not the word list, so it was
   measured rather than argued: **178 of 13,993 filed messages, 1.3%**, with no
   single term running away and a tail of individual CVEs.
+- **Three copies of a block is the point at which it starts to drift, and the
+  drift is what costs you.** `triage`, `web` and `report` each answered "what
+  does the classifier think about the inbox?" in about twenty-eight lines of
+  their own. By the time it was noticed they had diverged — `report` collapsed
+  the three loader errors into one `try` whilst the others used three separate
+  blocks with the comments copied between them. Nothing was broken yet, and
+  that is the trap: this is the block a new guard is wired into, and a guard
+  wired into two callers out of three is a guard that silently does not apply
+  to the third. `pipeline.classify_run` is now the only copy.
+- **A duplicate test name is a test that never runs.** `tests/test_review.py`
+  had two functions called `test_quitting_stops_without_touching_the_rest` —
+  one for the binning loop, one for the held loop. Python keeps the later
+  definition, so the first had silently never executed, and the suite reported
+  1039 passing tests whilst running 1038. Found by `ruff --select F811`, not by
+  the suite, which cannot see it by construction. Worth running periodically:
+  `uvx ruff check --select F811,F821,F401 src/ tests/`.
 - **This tool is deliberately never scheduled, and the reason is a permission
   it would have to hold.** A LaunchAgent was built, installed and tested on
   17 August 2026, then removed the same day. Two findings are worth keeping.

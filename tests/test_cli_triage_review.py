@@ -10,14 +10,13 @@ import time
 
 from click.testing import CliRunner
 
-import mail_triage.cli as cli_module
 from mail_triage.cli import cli
 from mail_triage.corrections import Correction, record_correction
 from mail_triage.corrections import load_corrections
 from mail_triage.mail_app import FakeMail
 from mail_triage.rules import Rule, record_rule
 
-from tests.cli_helpers import strong_sender_rows, stub_config, triage_fixture_with_one_strong_sender
+from tests.cli_helpers import strong_sender_rows, stub_config, triage_fixture_with_one_strong_sender, patch_all
 from tests.conftest import build_fixture_db
 
 
@@ -46,14 +45,14 @@ def _prepare_live_run(tmp_path, monkeypatch, with_trash=True):
                      "mailbox_url": "imap://AAAAAAAA/Deleted Messages", "read": 1})
         build_fixture_db(db_path, rows)
     mailboxes = ["Projects", "Deleted Messages"] if with_trash else ["Projects"]
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     mail = FakeMail(
         inbox=[900], mailboxes=list(mailboxes),
         headers={900: {"List-Unsubscribe": "<mailto:x@work.example>"}},
         keys={900: "<nine-hundred@work.example>"},
     )
-    monkeypatch.setattr(cli_module, "AppleScriptMail", lambda: mail)
+    patch_all(monkeypatch, "AppleScriptMail", lambda: mail)
     runner = CliRunner()
     assert runner.invoke(cli, ["learn", "--no-drift"]).exit_code == 0
     return runner, mail
@@ -123,14 +122,14 @@ def _prepare_unplaceable_run(tmp_path, monkeypatch):
                  "subject": "Unsolicited offer", "date_sent": now - day,
                  "mailbox_url": "imap://AAAAAAAA/INBOX", "read": 0})
     build_fixture_db(db_path, rows)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     mail = FakeMail(
         inbox=[900, 950], mailboxes=["Projects", "Deleted Messages"],
         headers={900: {"List-Unsubscribe": "<mailto:x@work.example>"}},
         keys={900: "<nine-hundred@work.example>", 950: "<nine-fifty@nowhere.example>"},
     )
-    monkeypatch.setattr(cli_module, "AppleScriptMail", lambda: mail)
+    patch_all(monkeypatch, "AppleScriptMail", lambda: mail)
     runner = CliRunner()
     assert runner.invoke(cli, ["learn", "--no-drift"]).exit_code == 0
     return runner, mail
@@ -203,7 +202,7 @@ def test_a_bin_rule_shows_the_bin_as_the_destination(tmp_path, monkeypatch):
 
 def test_rules_lists_a_bin_rule_clearly(tmp_path, monkeypatch):
 
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     record_rule(
         tmp_path / "local" / "rules.json",
         Rule(sender="junk@shop.example", action="bin", folder=None,
@@ -265,8 +264,8 @@ def test_auto_files_confident_mail_without_asking(tmp_path, monkeypatch):
     # The fixture's filable message reads 0.80, below the 0.9 default, so the
     # threshold is lowered to put it in range rather than inflating the
     # fixture's history until it clears a number.
-    monkeypatch.setattr(
-        cli_module, "load_config", lambda: stub_config(tmp_path, auto_threshold=0.75)
+    patch_all(
+        monkeypatch, "load_config", lambda: stub_config(tmp_path, auto_threshold=0.75)
     )
     # No input at all: an unattended run must never block on a prompt.
     result = runner.invoke(cli, ["triage", "--auto"], input="")
@@ -279,8 +278,8 @@ def test_auto_files_confident_mail_without_asking(tmp_path, monkeypatch):
 def test_auto_leaves_everything_it_cannot_place(tmp_path, monkeypatch):
     """The unplaceable message is the one --auto must not touch."""
     runner, mail = _prepare_unplaceable_run(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        cli_module, "load_config", lambda: stub_config(tmp_path, auto_threshold=0.75)
+    patch_all(
+        monkeypatch, "load_config", lambda: stub_config(tmp_path, auto_threshold=0.75)
     )
     runner.invoke(cli, ["triage", "--auto"], input="")
     assert [entry[0] for entry in mail.moved] == [900]
@@ -297,8 +296,8 @@ def test_auto_and_dry_run_together_are_refused(tmp_path, monkeypatch):
 def test_auto_does_not_ask_about_uncertain_senders(tmp_path, monkeypatch):
     """Asking is a conversation, and there is nobody there to have it."""
     runner, _ = _prepare_unplaceable_run(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        cli_module, "load_config", lambda: stub_config(tmp_path, auto_threshold=0.75)
+    patch_all(
+        monkeypatch, "load_config", lambda: stub_config(tmp_path, auto_threshold=0.75)
     )
     result = runner.invoke(cli, ["triage", "--auto"], input="")
     assert result.exit_code == 0
@@ -307,8 +306,8 @@ def test_auto_does_not_ask_about_uncertain_senders(tmp_path, monkeypatch):
 
 def test_auto_with_nothing_confident_enough_moves_nothing(tmp_path, monkeypatch):
     runner, mail = _prepare_unplaceable_run(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        cli_module, "load_config", lambda: stub_config(tmp_path, auto_threshold=1.01)
+    patch_all(
+        monkeypatch, "load_config", lambda: stub_config(tmp_path, auto_threshold=1.01)
     )
     result = runner.invoke(cli, ["triage", "--auto"], input="")
     assert result.exit_code == 0

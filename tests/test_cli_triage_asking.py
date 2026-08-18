@@ -6,10 +6,9 @@ import time
 
 from click.testing import CliRunner
 
-import mail_triage.cli as cli_module
 from mail_triage.cli import cli
 
-from tests.cli_helpers import StubMail, stub_config
+from tests.cli_helpers import StubMail, stub_config, patch_all
 from tests.conftest import build_fixture_db
 
 
@@ -45,10 +44,10 @@ def _split_sender_fixture(tmp_path):
 
 def _prepare_split_run(tmp_path, monkeypatch):
     db_path = _split_sender_fixture(tmp_path)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
-    monkeypatch.setattr(
-        cli_module, "AppleScriptMail",
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
+    patch_all(
+        monkeypatch, "AppleScriptMail",
         lambda: StubMail(headers={700: {"List-Unsubscribe": "<mailto:x@shop.example>"}}),
     )
     runner = CliRunner()

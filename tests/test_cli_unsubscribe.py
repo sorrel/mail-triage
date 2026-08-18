@@ -4,29 +4,29 @@ from __future__ import annotations
 
 from click.testing import CliRunner
 
-import mail_triage.cli as cli_module
+import mail_triage.envelope as envelope_module
 from mail_triage.cli import cli
 from mail_triage.mail_app import FakeMail
 from mail_triage.sends import SentRequest, list_batches, load_batch, record_send
 from mail_triage.unsubscribe import UnsubscribeOption
 
-from tests.cli_helpers import stub_config
+from tests.cli_helpers import stub_config, patch_all
 from tests.conftest import build_fixture_db
 
 
 def _stub_candidates(monkeypatch, options):
-    monkeypatch.setattr(
-        cli_module, "find_candidates", lambda reader, config, mail, limit: list(options)
+    patch_all(
+        monkeypatch, "find_candidates", lambda reader, config, mail, limit: list(options)
     )
 
 
 def _sending_runner(tmp_path, monkeypatch, options):
 
     mail = FakeMail(inbox=[], mailboxes=[])
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
-    monkeypatch.setattr(cli_module, "AppleScriptMail", lambda: mail)
-    monkeypatch.setattr(cli_module, "snapshot_database", lambda source, work: source)
-    monkeypatch.setattr(cli_module, "EnvelopeReader", lambda path: _NullReader())
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "AppleScriptMail", lambda: mail)
+    monkeypatch.setattr(envelope_module, "snapshot_database", lambda source, work: source)
+    monkeypatch.setattr(envelope_module, "EnvelopeReader", lambda path: _NullReader())
     _stub_candidates(monkeypatch, options)
     return CliRunner(), mail
 
@@ -221,7 +221,7 @@ def test_check_refuses_when_the_sending_account_is_not_configured(tmp_path, monk
         sent_at=1_700_000_000, from_account="Some Other Account",
     ))
     runner, mail = _sending_runner(tmp_path, monkeypatch, [])
-    monkeypatch.setattr(cli_module, "load_config", lambda: config)
+    patch_all(monkeypatch, "load_config", lambda: config)
     result = runner.invoke(cli, ["unsubscribe", "--check"])
     assert result.exit_code == 0
     assert "Some Other Account" in result.output
@@ -250,9 +250,9 @@ def test_check_reports_a_bounce_it_can_attribute(tmp_path, monkeypatch):
             "X-Failed-Recipients": "leave@list.example",
         }},
     )
-    monkeypatch.setattr(cli_module, "load_config", lambda: config)
-    monkeypatch.setattr(cli_module, "AppleScriptMail", lambda: mail)
-    monkeypatch.setattr(cli_module, "snapshot_database", lambda source, work: db_path)
+    patch_all(monkeypatch, "load_config", lambda: config)
+    patch_all(monkeypatch, "AppleScriptMail", lambda: mail)
+    monkeypatch.setattr(envelope_module, "snapshot_database", lambda source, work: db_path)
 
     result = CliRunner().invoke(cli, ["unsubscribe", "--check"])
     assert result.exit_code == 0

@@ -13,13 +13,15 @@ from __future__ import annotations
 
 from click.testing import CliRunner
 
-import mail_triage.cli as cli_module
 from mail_triage.cli import cli
 from mail_triage.config import Config
 from mail_triage.corpus import TrainingExample
 from mail_triage.model.sender import SenderModel
 from mail_triage.model.store import TrainedModel, save_model
 from mail_triage.rules import Rule, record_rule
+
+
+from tests.cli_helpers import patch_all
 
 
 def _stub_config(tmp_path):
@@ -44,7 +46,7 @@ def _train(tmp_path, examples):
 
 
 def _run(tmp_path, monkeypatch, sender):
-    monkeypatch.setattr(cli_module, "load_config", lambda: _stub_config(tmp_path))
+    patch_all(monkeypatch, "load_config", lambda: _stub_config(tmp_path))
     return CliRunner().invoke(cli, ["explain", sender])
 
 
@@ -94,7 +96,7 @@ def test_the_sender_is_matched_regardless_of_case(tmp_path, monkeypatch):
 
 
 def test_a_missing_model_asks_you_to_learn_rather_than_crashing(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "load_config", lambda: _stub_config(tmp_path))
+    patch_all(monkeypatch, "load_config", lambda: _stub_config(tmp_path))
     result = CliRunner().invoke(cli, ["explain", "orders@shop.example"])
     assert result.exit_code != 0
     assert "learn" in result.output

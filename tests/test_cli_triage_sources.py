@@ -6,13 +6,12 @@ import time
 
 from click.testing import CliRunner
 
-import mail_triage.cli as cli_module
 from mail_triage.cli import cli
 from mail_triage.config import Config
 from mail_triage.config import Source
 from mail_triage.mail_app import FakeMail
 
-from tests.cli_helpers import strong_sender_rows
+from tests.cli_helpers import strong_sender_rows, patch_all
 from tests.conftest import build_fixture_db
 
 
@@ -48,8 +47,8 @@ def _prepare_two_sources(tmp_path, monkeypatch):
     if db_path.exists():
         db_path.unlink()
     build_fixture_db(db_path, rows)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: _two_source_config(tmp_path))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: _two_source_config(tmp_path))
     mail = FakeMail(
         inbox=[], mailboxes=["Projects", "Deleted Messages", "[Gmail]/Bin", "INBOX"],
         accounts={"iCloud": {"INBOX": [900]}, "Gmail": {"INBOX": [700]}},
@@ -61,7 +60,7 @@ def _prepare_two_sources(tmp_path, monkeypatch):
             700: {"List-Unsubscribe": "<mailto:y@work.example>"},
         },
     )
-    monkeypatch.setattr(cli_module, "AppleScriptMail", lambda: mail)
+    patch_all(monkeypatch, "AppleScriptMail", lambda: mail)
     runner = CliRunner()
     assert runner.invoke(cli, ["learn", "--no-drift"]).exit_code == 0
     return runner, mail
@@ -155,8 +154,8 @@ def _prepare_three_sources(tmp_path, monkeypatch):
     if db_path.exists():
         db_path.unlink()
     build_fixture_db(db_path, rows)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: _three_source_config(tmp_path))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: _three_source_config(tmp_path))
     mail = FakeMail(
         inbox=[], mailboxes=["Projects", "Deleted Messages", "[Gmail]/Bin",
                              "Deleted Items", "INBOX", "Inbox"],
@@ -170,7 +169,7 @@ def _prepare_three_sources(tmp_path, monkeypatch):
             800: {"List-Unsubscribe": "<mailto:z@work.example>"},
         },
     )
-    monkeypatch.setattr(cli_module, "AppleScriptMail", lambda: mail)
+    patch_all(monkeypatch, "AppleScriptMail", lambda: mail)
     runner = CliRunner()
     assert runner.invoke(cli, ["learn", "--no-drift"]).exit_code == 0
     return runner, mail

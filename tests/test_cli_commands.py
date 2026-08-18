@@ -9,22 +9,20 @@ from __future__ import annotations
 import time
 
 from click.testing import CliRunner
-from click.testing import CliRunner
 
 import mail_triage.cli as cli_module
-from mail_triage import cli as cli_module
+import mail_triage.envelope as envelope_module
 from mail_triage.cli import cli
 from mail_triage.envelope import SnapshotError
 from mail_triage.rules import Rule, load_rules, record_rule
-from mail_triage.rules import Rule, record_rule
 
-from tests.cli_helpers import StubMail, stub_config
+from tests.cli_helpers import StubMail, stub_config, patch_all
 from tests.conftest import build_fixture_db
 
 
 def test_accounts_success_path(fixture_db, monkeypatch):
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", fixture_db)
-    monkeypatch.setattr(cli_module, "account_names", lambda: {})
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", fixture_db)
+    patch_all(monkeypatch, "account_names", lambda: {})
     runner = CliRunner()
     result = runner.invoke(cli, ["accounts"])
     assert result.exit_code == 0
@@ -35,8 +33,8 @@ def test_accounts_success_path(fixture_db, monkeypatch):
 def test_accounts_table_shows_placeholders_when_no_names(fixture_db, monkeypatch):
     # Neither fixture account has a matching Mail account: the imap:// one
     # should read "(not in Mail)" and the local:// one "On My Mac".
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", fixture_db)
-    monkeypatch.setattr(cli_module, "account_names", lambda: {})
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", fixture_db)
+    patch_all(monkeypatch, "account_names", lambda: {})
     runner = CliRunner()
     result = runner.invoke(cli, ["accounts"])
     assert result.exit_code == 0
@@ -45,8 +43,8 @@ def test_accounts_table_shows_placeholders_when_no_names(fixture_db, monkeypatch
 
 
 def test_accounts_table_shows_resolved_name(fixture_db, monkeypatch):
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", fixture_db)
-    monkeypatch.setattr(cli_module, "account_names", lambda: {"AAAAAAAA": "Test Account"})
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", fixture_db)
+    patch_all(monkeypatch, "account_names", lambda: {"AAAAAAAA": "Test Account"})
     runner = CliRunner()
     result = runner.invoke(cli, ["accounts"])
     assert result.exit_code == 0
@@ -55,7 +53,7 @@ def test_accounts_table_shows_resolved_name(fixture_db, monkeypatch):
 
 def test_accounts_missing_database(tmp_path, monkeypatch):
     missing = tmp_path / "Envelope Index"
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", missing)
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", missing)
     runner = CliRunner()
     result = runner.invoke(cli, ["accounts"])
     assert result.exit_code != 0
@@ -72,8 +70,8 @@ def test_accounts_permission_denied(tmp_path, monkeypatch):
     # genuinely missing database. DEFAULT_DB_PATH must point at a path that
     # does not exist so a fix relying on `.exists()` as a pre-check cannot
     # accidentally pass this test.
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", tmp_path / "Envelope Index")
-    monkeypatch.setattr(cli_module, "snapshot_database", raise_permission_error)
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", tmp_path / "Envelope Index")
+    monkeypatch.setattr(envelope_module, "snapshot_database", raise_permission_error)
     runner = CliRunner()
     result = runner.invoke(cli, ["accounts"])
     assert result.exit_code != 0
@@ -86,7 +84,7 @@ def test_a_database_that_never_settles_is_reported_not_thrown(tmp_path, monkeypa
     def raise_snapshot_error(source, dest_dir):
         raise SnapshotError("Mail checkpointed its database every time")
 
-    monkeypatch.setattr(cli_module, "snapshot_database", raise_snapshot_error)
+    monkeypatch.setattr(envelope_module, "snapshot_database", raise_snapshot_error)
     result = CliRunner().invoke(cli, ["accounts"])
     assert result.exit_code != 0
     assert "checkpointed its database" in result.output
@@ -94,8 +92,8 @@ def test_a_database_that_never_settles_is_reported_not_thrown(tmp_path, monkeypa
 
 
 def test_learn_reports_counts_and_writes_the_model(fixture_db, tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", fixture_db)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", fixture_db)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     runner = CliRunner()
     result = runner.invoke(cli, ["learn"])
     assert result.exit_code == 0
@@ -119,8 +117,8 @@ def test_learn_shows_drift_by_default(tmp_path, monkeypatch):
              "mailbox_url": "imap://AAAAAAAA/New Folder", "read": 1},
         ],
     )
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     runner = CliRunner()
     result = runner.invoke(cli, ["learn"])
     assert result.exit_code == 0
@@ -158,14 +156,14 @@ def test_triage_dry_run_reports_placed_and_unplaced_without_moving(tmp_path, mon
              "mailbox_url": "imap://AAAAAAAA/INBOX", "read": 0},
         ],
     )
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     # The guard (Task 11B) fetches headers for "New order" since
     # orders@shop.example is not a no-reply-style address — supply
     # List-Unsubscribe so the pre-existing "would be filed" expectation
     # still holds, proving the guard ran and correctly did not veto it.
-    monkeypatch.setattr(
-        cli_module, "AppleScriptMail",
+    patch_all(
+        monkeypatch, "AppleScriptMail",
         lambda: StubMail(headers={501: {"List-Unsubscribe": "<mailto:x@shop.example>"}}),
     )
     runner = CliRunner()
@@ -185,7 +183,7 @@ def test_triage_dry_run_reports_placed_and_unplaced_without_moving(tmp_path, mon
 # --- The `rules` command ------------------------------------------------------
 
 def test_rules_reports_when_there_are_none(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     result = CliRunner().invoke(cli, ["rules"])
     assert result.exit_code == 0
     assert "No rules" in result.output
@@ -193,7 +191,7 @@ def test_rules_reports_when_there_are_none(tmp_path, monkeypatch):
 
 def test_rules_lists_what_has_been_answered(tmp_path, monkeypatch):
 
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     record_rule(
         (tmp_path / "local" / "rules.json"),
         Rule(sender="news@shop.example", action="file", folder="Parent/Keep",
@@ -207,7 +205,7 @@ def test_rules_lists_what_has_been_answered(tmp_path, monkeypatch):
 
 def test_rules_forget_removes_a_rule(tmp_path, monkeypatch):
 
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     path = tmp_path / "local" / "rules.json"
     record_rule(path, Rule(sender="news@shop.example", action="file", folder="Parent/Keep",
                            answered_at=1, candidates={}))
@@ -217,7 +215,7 @@ def test_rules_forget_removes_a_rule(tmp_path, monkeypatch):
 
 
 def test_rules_forget_reports_an_unknown_sender(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     result = CliRunner().invoke(cli, ["rules", "--forget", "stranger@nowhere.example"])
     assert result.exit_code != 0
     assert "stranger@nowhere.example" in result.output
@@ -246,8 +244,8 @@ def test_size_command_renders_grids(tmp_path, monkeypatch):
 
 
     db = _size_store(tmp_path)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db)
-    monkeypatch.setattr(cli_module, "account_names", lambda: {})
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db)
+    patch_all(monkeypatch, "account_names", lambda: {})
 
     result = CliRunner().invoke(cli_module.cli, ["size", "--min-size", "0"])
     assert result.exit_code == 0, result.output
@@ -268,8 +266,8 @@ def test_size_command_filters_by_account(tmp_path, monkeypatch):
 
 
     db = _size_store(tmp_path)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db)
-    monkeypatch.setattr(cli_module, "account_names", lambda: {})
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db)
+    patch_all(monkeypatch, "account_names", lambda: {})
 
     result = CliRunner().invoke(
         cli_module.cli, ["size", "--min-size", "0", "--account", "nosuchaccount"]
@@ -284,8 +282,8 @@ def test_size_command_never_writes_to_the_real_database(tmp_path, monkeypatch):
 
     db = _size_store(tmp_path)
     before = db.read_bytes()
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db)
-    monkeypatch.setattr(cli_module, "account_names", lambda: {})
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db)
+    patch_all(monkeypatch, "account_names", lambda: {})
 
     CliRunner().invoke(cli_module.cli, ["size", "--min-size", "0"])
     assert db.read_bytes() == before

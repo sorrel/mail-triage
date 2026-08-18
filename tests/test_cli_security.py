@@ -13,10 +13,10 @@ import time
 
 from click.testing import CliRunner
 
-import mail_triage.cli as cli_module
+import mail_triage.pipeline as pipeline_module
 from mail_triage.cli import cli
 
-from tests.cli_helpers import StubMail, stub_config
+from tests.cli_helpers import StubMail, stub_config, patch_all
 from tests.conftest import build_fixture_db
 
 
@@ -48,15 +48,15 @@ def fixture(tmp_path, subject):
 
 def run_triage(tmp_path, monkeypatch, subject, args=("triage", "--dry-run")):
     db_path = fixture(tmp_path, subject)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     # A no-reply address settles is_bulk from the address alone, so the reply
     # guard never even fetches headers for this message. That is the whole
     # point, and it is the real-world finding these tests encode: the guards
     # that already exist have nothing to say about alert mail, so the security
     # guard is the only thing that can hold it.
-    monkeypatch.setattr(
-        cli_module, "AppleScriptMail", lambda: StubMail(headers={900: {}})
+    patch_all(
+        monkeypatch, "AppleScriptMail", lambda: StubMail(headers={900: {}})
     )
     runner = CliRunner()
     assert runner.invoke(cli, ["learn", "--no-drift"]).exit_code == 0
@@ -102,10 +102,10 @@ def test_a_declared_sender_is_held_whatever_the_subject(tmp_path, monkeypatch):
     config = stub_config(tmp_path)
     config.security_senders_path.parent.mkdir(parents=True, exist_ok=True)
     config.security_senders_path.write_text(json.dumps(["vendor.example"]))
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: config)
-    monkeypatch.setattr(
-        cli_module, "AppleScriptMail", lambda: StubMail(headers={900: {}})
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: config)
+    patch_all(
+        monkeypatch, "AppleScriptMail", lambda: StubMail(headers={900: {}})
     )
     runner = CliRunner()
     assert runner.invoke(cli, ["learn", "--no-drift"]).exit_code == 0
@@ -120,8 +120,8 @@ def test_an_unreadable_declaration_file_stops_the_run(tmp_path, monkeypatch):
     config = stub_config(tmp_path)
     config.security_senders_path.parent.mkdir(parents=True, exist_ok=True)
     config.security_senders_path.write_text("{ not json")
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: config)
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: config)
     runner = CliRunner()
     assert runner.invoke(cli, ["learn", "--no-drift"]).exit_code == 0
     result = runner.invoke(cli, ["triage", "--dry-run"])
@@ -132,7 +132,7 @@ def test_an_unreadable_declaration_file_stops_the_run(tmp_path, monkeypatch):
 # --- the command that manages the list --------------------------------------
 
 def test_declaring_and_listing_a_sender(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     runner = CliRunner()
     added = runner.invoke(cli, ["security", "--add", "no-reply@vendor.example"])
     assert added.exit_code == 0
@@ -142,7 +142,7 @@ def test_declaring_and_listing_a_sender(tmp_path, monkeypatch):
 
 
 def test_forgetting_a_sender_that_was_never_declared_is_an_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     result = CliRunner().invoke(cli, ["security", "--forget", "nobody@vendor.example"])
     assert result.exit_code != 0
 
@@ -150,7 +150,7 @@ def test_forgetting_a_sender_that_was_never_declared_is_an_error(tmp_path, monke
 def test_the_empty_list_still_explains_the_vocabulary(tmp_path, monkeypatch):
     """"No senders declared" on its own reads as "this guard is off", which
     is exactly wrong — the subject vocabulary applies regardless."""
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     output = CliRunner().invoke(cli, ["security"]).output
     assert "subject vocabulary still applies" in output
 
@@ -163,13 +163,15 @@ def test_a_database_it_cannot_read_says_what_to_do(tmp_path, monkeypatch):
     ``accounts`` and ``size`` had handled PermissionError all along; ``triage``,
     ``web`` and ``report`` caught only InputError around ``gather``.
     """
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
-    monkeypatch.setattr(cli_module, "load_model", lambda path: _ANY_MODEL)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
+    # Patched in pipeline, which is where the run is actually assembled — the
+    # CLI's job is now only to translate what comes back out of it.
+    monkeypatch.setattr(pipeline_module, "load_model", lambda path: _ANY_MODEL)
 
     def refuse(*args, **kwargs):
         raise PermissionError(1, "Operation not permitted", "Envelope Index-wal")
 
-    monkeypatch.setattr(cli_module, "gather", refuse)
+    monkeypatch.setattr(pipeline_module, "gather", refuse)
     result = CliRunner().invoke(cli, ["triage", "--dry-run"])
     assert result.exit_code != 0
     assert "Full Disk Access" in result.output
