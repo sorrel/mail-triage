@@ -342,7 +342,7 @@ def test_enter_keeps_the_message():
     assert review_unplaced([unplaced()], lambda text: next(answers)) == []
 
 
-def test_quitting_stops_without_touching_the_rest():
+def test_quitting_the_binning_loop_stops_without_touching_the_rest():
     answers = iter(["y", "q", "d"])
     decisions = review_unplaced(
         [unplaced(subject="First", rowid=1), unplaced(subject="Second", rowid=2)],
@@ -728,7 +728,7 @@ def test_going_back_discards_the_previous_answer():
     assert [d.proposal.message.rowid for d in decisions] == [2]
 
 
-def test_quitting_stops_without_touching_the_rest():
+def test_quitting_the_held_loop_stops_without_touching_the_rest():
     replies = iter(["y", "q"])
     assert review_held(
         [held(rowid=1), held(rowid=2, subject="Second")], lambda text: next(replies)

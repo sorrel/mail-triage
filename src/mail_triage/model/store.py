@@ -12,7 +12,7 @@ from pathlib import Path
 from mail_triage.config import Config
 from mail_triage.corpus import build_corpus
 from mail_triage.corrections import corrections_as_examples, load_corrections
-from mail_triage.envelope import EnvelopeReader, snapshot_database
+from mail_triage.envelope import open_snapshot
 from mail_triage.model.sender import SenderModel
 from mail_triage.model.tokens import TokenModel
 
@@ -94,13 +94,8 @@ def train_from_history(config: Config, db_path: Path) -> TrainedModel:
     historical filing, which is how a changed mind overrides an old habit
     without re-filing thousands of past messages by hand.
     """
-    with tempfile.TemporaryDirectory() as work:
-        snapshot = snapshot_database(db_path, Path(work))
-        reader = EnvelopeReader(snapshot)
-        try:
-            examples = build_corpus(reader.all_messages(), config)
-        finally:
-            reader.close()
+    with open_snapshot(db_path) as reader:
+        examples = build_corpus(reader.all_messages(), config)
     examples.extend(corrections_as_examples(load_corrections(config), config))
     sender_model = SenderModel()
     sender_model.train(examples)

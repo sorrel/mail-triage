@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import tempfile
 from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,6 +123,29 @@ def snapshot_database(
         f"({attempts} attempts), so no consistent snapshot could be taken. "
         "Nothing was read; try again in a moment."
     )
+
+
+@contextmanager
+def open_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Iterator["EnvelopeReader"]:
+    """A reader over a fresh snapshot, closed and cleaned up afterwards.
+
+    Every bulk read in the tool wants the same four things: a temporary
+    directory, a verified snapshot into it, a reader over that, and both
+    released at the end whatever happens. Written out longhand it was eight
+    lines, repeated eight times, and the ``finally: reader.close()`` was the
+    part most easily left off — a leaked handle on a copy inside a directory
+    being deleted underneath it.
+
+    The snapshot is thrown away with the directory, which is deliberate: it is
+    a point-in-time copy, and keeping one would only invite a later read
+    believing it was current.
+    """
+    with tempfile.TemporaryDirectory() as work:
+        reader = EnvelopeReader(snapshot_database(db_path, Path(work)))
+        try:
+            yield reader
+        finally:
+            reader.close()
 
 
 class EnvelopeReader:

@@ -10,11 +10,11 @@ import time
 
 from click.testing import CliRunner
 
-import mail_triage.cli as cli_module
 from mail_triage.cli import cli
 from mail_triage.mail_app import MailError, MailNotRunningError
 
 from tests.cli_helpers import (
+    patch_all,
     StubMail,
     strong_sender_rows,
     stub_config,
@@ -25,12 +25,12 @@ from tests.conftest import build_fixture_db
 
 def test_triage_vetoes_a_message_the_headers_show_is_not_bulk(tmp_path, monkeypatch):
     db_path = triage_fixture_with_one_strong_sender(tmp_path)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     # No List-Unsubscribe: an ordinary human sender, so the guard must hold
     # this back even though the sender's filing history is strong.
-    monkeypatch.setattr(
-        cli_module, "AppleScriptMail",
+    patch_all(
+        monkeypatch, "AppleScriptMail",
         lambda: StubMail(headers={900: {"Subject": "Can you take a look"}}),
     )
     runner = CliRunner()
@@ -51,10 +51,10 @@ def test_triage_vetoes_a_message_the_headers_show_is_not_bulk(tmp_path, monkeypa
 
 def test_triage_mail_not_running_vetoes_and_warns_instead_of_crashing(tmp_path, monkeypatch):
     db_path = triage_fixture_with_one_strong_sender(tmp_path)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
-    monkeypatch.setattr(
-        cli_module, "AppleScriptMail",
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
+    patch_all(
+        monkeypatch, "AppleScriptMail",
         lambda: StubMail(error=MailNotRunningError("Mail is not running.")),
     )
     runner = CliRunner()
@@ -71,10 +71,10 @@ def test_triage_mail_not_running_vetoes_and_warns_instead_of_crashing(tmp_path, 
 
 def test_triage_generic_header_fetch_failure_vetoes_and_warns(tmp_path, monkeypatch):
     db_path = triage_fixture_with_one_strong_sender(tmp_path)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
-    monkeypatch.setattr(
-        cli_module, "AppleScriptMail",
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
+    patch_all(
+        monkeypatch, "AppleScriptMail",
         lambda: StubMail(error=MailError("something went wrong")),
     )
     runner = CliRunner()
@@ -138,9 +138,9 @@ def test_triage_vetoes_a_sender_who_is_now_only_deleted(tmp_path, monkeypatch):
              "date_sent": now - 1 * day, "mailbox_url": "imap://AAAAAAAA/INBOX", "read": 0},
         ],
     )
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
-    monkeypatch.setattr(cli_module, "AppleScriptMail", lambda: StubMail())
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "AppleScriptMail", lambda: StubMail())
     runner = CliRunner()
     result = runner.invoke(cli, ["learn", "--no-drift"])
     assert result.exit_code == 0
@@ -164,8 +164,8 @@ def test_learn_no_drift_flag_suppresses_the_drift_report(tmp_path, monkeypatch):
              "mailbox_url": "imap://AAAAAAAA/New Folder", "read": 1},
         ],
     )
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
     runner = CliRunner()
     result = runner.invoke(cli, ["learn", "--no-drift"])
     assert result.exit_code == 0
@@ -181,10 +181,10 @@ def test_triage_files_a_sender_declared_never_personal(tmp_path, monkeypatch):
     (Classifier built without ``never_personal``) turns this red.
     """
     db_path = triage_fixture_with_one_strong_sender(tmp_path)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
-    monkeypatch.setattr(
-        cli_module, "AppleScriptMail",
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
+    patch_all(
+        monkeypatch, "AppleScriptMail",
         lambda: StubMail(headers={900: {"Subject": "Can you take a look"}}),
     )
     runner = CliRunner()
@@ -208,9 +208,9 @@ def test_triage_still_holds_a_flagged_message_from_a_never_personal_sender(tmp_p
     rows = strong_sender_rows(now, day)
     rows[-1] = {**rows[-1], "flagged": 1}
     build_fixture_db(db_path, rows)
-    monkeypatch.setattr(cli_module, "DEFAULT_DB_PATH", db_path)
-    monkeypatch.setattr(cli_module, "load_config", lambda: stub_config(tmp_path))
-    monkeypatch.setattr(cli_module, "AppleScriptMail", lambda: StubMail(headers={}))
+    patch_all(monkeypatch, "DEFAULT_DB_PATH", db_path)
+    patch_all(monkeypatch, "load_config", lambda: stub_config(tmp_path))
+    patch_all(monkeypatch, "AppleScriptMail", lambda: StubMail(headers={}))
     runner = CliRunner()
     assert runner.invoke(cli, ["learn", "--no-drift"]).exit_code == 0
     assert runner.invoke(
