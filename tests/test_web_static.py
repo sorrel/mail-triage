@@ -113,22 +113,12 @@ def test_the_page_offers_no_form_given_its_own_csp_forbids_form_action():
     assert "<form" not in read("index.html")
 
 
-def test_the_override_confirmation_defaults_to_leaving_the_mail_alone():
-    """Escape, the backdrop and the autofocused button must all mean "no"."""
-    markup = read("index.html")
-    source = read("app.js")
-    assert 'id="confirm-no" autofocus' in markup
-    assert 'dialog.returnValue = "no"' in source
-    assert 'dialog.returnValue === "yes"' in source
-
-
 def test_a_keystroke_can_only_do_what_a_click_would():
     """The keystroke presses the row's own button rather than calling choose()
-    behind its back, so the two cannot drift apart — and a button that stops
-    to ask is given no key at all. Blanket-refusing every held row was the
-    earlier rule, and it refused "b" on mail whose Bin button asks nothing."""
+    behind its back, so the two cannot drift apart. Every button the row draws
+    has one, held mail included."""
     source = read("app.js")
-    assert "if (!offer.confirm && KEYSTROKES[offer.action])" in source
+    assert "if (KEYSTROKES[offer.action])" in source
     assert 'button.dataset.key = KEYSTROKES[offer.action];' in source
     assert 'current.querySelector(`.row-actions button[data-key="${event.key}"]`)' in source
     assert "button.click();" in source
@@ -163,15 +153,16 @@ def test_the_message_you_are_on_is_visible_when_clicked_as_well_as_tabbed_to():
     assert ".row:focus-within { box-shadow: inset 3px 0 0 var(--file); }" in styles
 
 
-def test_held_mail_is_binned_on_the_same_terms_as_anything_else():
+def test_held_mail_is_acted_on_on_the_same_terms_as_anything_else():
     """Mirrors routes._permitted, which is where it is actually enforced. One
-    key, no question: the guard is about mail being filed away unseen, not
-    about the bin. Filing a held message still asks."""
+    key, no question, for filing as well as binning: the guard says what it
+    noticed and keeps the mail out of an unattended run, and somebody looking
+    at the row has already read the reason beside it."""
     source = read("app.js")
     held_block = source.split('veto_kind === "deletion"')[1]
     assert '{ label: "Bin", action: "bin" }, { label: "Skip", action: "skip" }' in held_block
     assert "Bin anyway" not in source
-    assert "confirm: confirmationFor(proposal)" in held_block
+    assert "override: true," in held_block
 
 
 def test_file_is_not_offered_when_there_is_nowhere_to_file_to():
@@ -192,11 +183,13 @@ def test_every_filable_message_gets_a_folder_box():
     assert 'api("/api/folders")' in source
 
 
-def test_the_picker_still_asks_before_filing_a_bill():
-    """Choosing a folder must not become a way around the confirmation."""
+def test_the_picker_sends_the_override_held_mail_needs():
+    """The server refuses to file a held message without an explicit
+    per-message override, so a folder typed into a held row must carry one or
+    the choice comes back a 400."""
     source = read("app.js")
-    assert "confirmationFor(proposal)" in source
-    assert "if (question && !(await confirmOverride(question)))" in source
+    assert 'const override = Boolean(proposal.veto) && proposal.veto_kind !== "deletion";' in source
+    assert 'choose(proposal.id, "file", article, override, name);' in source
 
 
 def test_applying_shows_each_message_leaving():
@@ -316,30 +309,12 @@ def test_the_shortcuts_are_written_down_on_the_page():
         assert key in markup, key
 
 
-def test_the_confirmation_can_be_answered_without_a_mouse():
-    """The page's own shortcuts stop at an open dialog, which left this box
-    with nothing but Tab and Escape — an interruption to a keyboard flow
-    rather than part of one."""
+def test_nothing_in_the_browser_stops_to_ask_before_filing():
+    """Filing is what the page is for. The guards still hold mail back from an
+    unattended run and still print their reason on the row; what they no
+    longer do is put a dialog between a deliberate press and the move."""
     source = read("app.js")
     markup = read("index.html")
-    assert 'getElementById("confirm").addEventListener("keydown"' in source
-    assert '["arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)' in source
-    assert 'key === "l" || key === "n"' in source
-    assert 'key === "f" || key === "y"' in source
-    # And the letters are shown, not folklore.
-    assert "Leave it <kbd>L</kbd>" in markup
-    assert "File it <kbd>F</kbd>" in markup
-
-
-def test_the_confirmation_arrows_land_on_the_safe_answer_first():
-    """From nowhere in particular, leftmost is "Leave it"."""
-    assert "const next = at < 0 ? 0 :" in read("app.js")
-
-
-def test_security_mail_asks_before_it_is_filed_from_the_browser():
-    """The browser is a front end over the same guards. Filing security mail
-    away is the outcome the guard exists for, so it asks first — binning does
-    not, on the same terms as any other held message."""
-    source = read("app.js")
-    assert 'proposal.veto_kind === "security"' in source
-    assert "This looks security-relevant. File it away anyway?" in source
+    assert "confirmOverride" not in source
+    assert "Are you sure" not in markup
+    assert 'id="confirm"' not in markup

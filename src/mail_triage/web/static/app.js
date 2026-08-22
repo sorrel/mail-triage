@@ -126,14 +126,11 @@ function row(proposal) {
   for (const offer of offers(proposal)) {
     const button = el("button", null, offer.label);
     button.type = "button";
-    // The keystroke is the button, so it exists exactly when the button does
-    // and never when the button would stop to ask. Deciding this here rather
-    // than in the keyboard handler is what stopped the two disagreeing.
-    if (!offer.confirm && KEYSTROKES[offer.action]) {
+    // The keystroke is the button, so it exists exactly when the button does.
+    if (KEYSTROKES[offer.action]) {
       button.dataset.key = KEYSTROKES[offer.action];
     }
-    button.addEventListener("click", async () => {
-      if (offer.confirm && !(await confirmOverride(offer.confirm))) return;
+    button.addEventListener("click", () => {
       choose(proposal.id, offer.action, article, offer.override);
     });
     actions.append(button);
@@ -164,21 +161,18 @@ function offers(proposal) {
     offered.push({ label: "Skip", action: "skip" });
     return offered;
   }
-  // Attention and invoice: the same three answers as any other message, and
-  // binning is one of them on the same terms — one key, no question. The
-  // guard's job is to stop mail being filed *away* unseen; it was never a
-  // reason to make throwing it out harder than throwing anything else out,
-  // and in practice held mail is binned as often as not.
-  //
-  // Filing still asks, because that is the outcome the guard exists for: a
-  // bill or a chase filed into a folder is one you stop seeing.
+  // Attention, invoice and security: the same three answers as any other
+  // message, and each on the same terms — one key, no question. The guard's
+  // job is to say what it noticed and hold the mail back from an *unattended*
+  // run; someone looking at the row has seen the reason printed beside it, and
+  // pressing File is them answering it. The server still wants the explicit
+  // per-message override, which is what `override: true` supplies.
   const offered = [];
   if (proposal.held_folder) {
     offered.push({
       label: `File anyway → ${proposal.held_folder}`,
       action: "file",
       override: true,
-      confirm: confirmationFor(proposal),
     });
   }
   offered.push({ label: "Bin", action: "bin" }, { label: "Skip", action: "skip" });
@@ -244,12 +238,13 @@ function picker(proposal, article) {
     }
   }
 
-  async function commit(name) {
+  function commit(name) {
     if (!folders.includes(name)) return;
-    const question = confirmationFor(proposal);
-    if (question && !(await confirmOverride(question))) return;
     close();
-    choose(proposal.id, "file", article, Boolean(question), name);
+    // Held mail needs the server's explicit per-message override; ordinary
+    // mail does not, and a deletion veto permits filing without one.
+    const override = Boolean(proposal.veto) && proposal.veto_kind !== "deletion";
+    choose(proposal.id, "file", article, override, name);
   }
 
   function close() {
@@ -289,75 +284,6 @@ function picker(proposal, article) {
   wrapper.append(input, list);
   return wrapper;
 }
-
-function confirmationFor(proposal) {
-  if (!proposal.veto) return null;
-  if (proposal.veto_kind === "deletion") return null;
-  if (proposal.veto_kind === "security") {
-    return "This looks security-relevant. File it away anyway?";
-  }
-  return proposal.veto_kind === "invoice"
-    ? "This looks like a bill. File it away anyway?"
-    : "This may be waiting on a reply from you. File it away anyway?";
-}
-
-/* Buttons rather than <form method="dialog">: the page's own CSP sets
- * form-action 'none', and a form here would be betting on how each browser
- * scopes that directive. Escape and the backdrop resolve to "no", so every
- * way out that is not the explicit button leaves the mail alone. */
-function confirmOverride(question) {
-  const dialog = document.getElementById("confirm");
-  document.getElementById("confirm-question").textContent = question;
-  dialog.returnValue = "no";
-  dialog.showModal();
-  return new Promise((resolve) => {
-    dialog.addEventListener(
-      "close",
-      () => resolve(dialog.returnValue === "yes"),
-      { once: true }
-    );
-  });
-}
-
-document.getElementById("confirm-no").addEventListener("click", () => {
-  document.getElementById("confirm").close("no");
-});
-document.getElementById("confirm-yes").addEventListener("click", () => {
-  document.getElementById("confirm").close("yes");
-});
-
-/* The page's own shortcuts stop at an open dialog — otherwise j and f would
- * be doing things to the list behind it. That left this box with nothing but
- * Tab and Escape, which is not a keyboard flow, it is an interruption to one.
- * So it gets its own: arrows to choose, the initial letter of either answer,
- * Return to confirm the one in focus, Escape to leave the mail alone. */
-document.getElementById("confirm").addEventListener("keydown", (event) => {
-  const dialog = document.getElementById("confirm");
-  const buttons = [
-    document.getElementById("confirm-no"),
-    document.getElementById("confirm-yes"),
-  ];
-  const key = event.key.toLowerCase();
-
-  if (["arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) {
-    event.preventDefault();
-    const at = buttons.indexOf(document.activeElement);
-    const forward = key === "arrowright" || key === "arrowdown";
-    // From nowhere in particular, land on the safe answer first.
-    const next = at < 0 ? 0 : (at + (forward ? 1 : -1) + buttons.length) % buttons.length;
-    buttons[next].focus();
-    return;
-  }
-  // "l" and "f" are the initials shown on the buttons; "n" and "y" because
-  // the question reads as a yes-or-no one and fingers go there.
-  if (key === "l" || key === "n") {
-    event.preventDefault();
-    dialog.close("no");
-  } else if (key === "f" || key === "y") {
-    event.preventDefault();
-    dialog.close("yes");
-  }
-});
 
 function choose(id, action, article, override = false, folder = null) {
   chosen.set(id, { action, override, folder });

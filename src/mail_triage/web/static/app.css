@@ -362,26 +362,6 @@ dialog.wide {
 
 dialog::backdrop { background: rgb(0 0 0 / 0.35); }
 
-/* The override confirmation. Deliberately plain and deliberately in the way:
- * declining is the default and has focus, so a stray Return leaves the mail
- * where it is. */
-dialog.narrow { max-width: 26rem; }
-dialog.narrow h2 { margin: 1.25rem 1.25rem 0; }
-.dialog-legend {
-  margin: 0 1.25rem 1.1rem;
-  text-align: right;
-  font-size: 0.6875rem;
-}
-
-dialog.narrow menu {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin: 0;
-  padding: 0.5rem 1.25rem 1.25rem;
-  list-style: none;
-}
-
 dialog header {
   display: flex;
   align-items: center;
