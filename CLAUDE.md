@@ -249,7 +249,6 @@ read.
   script sets `sender` from it and errors if it cannot resolve one, so the
   read-back added nothing and could only subtract. Ask the mailbox only what
   the mailbox alone knows — and, where you must, do it *before* the send.
-
 - **A failed send left no trace anywhere.** `record_send` runs only after
   success — deliberately, see `sends.py`, because a pre-send record would let
   the bounce check report "no bounce, therefore fine" for a request that never
