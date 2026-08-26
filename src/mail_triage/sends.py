@@ -44,11 +44,11 @@ class SentRequest:
     to_address: str
     subject: str
     sent_at: int
-    # The account Mail actually sent from, captured rather than assumed:
-    # ``send_mail`` uses Mail's default account, which need not be any
-    # configured source. The bounce comes back to this account's inbox, so
-    # guessing here means searching the wrong mailbox and reporting a clean
-    # run that never happened.
+    # The account the request was sent from. ``send_mail`` sets the sender
+    # explicitly and errors if the named account has no address, so this is
+    # the account whose address the list saw — and whose inbox the bounce
+    # comes back to. Recording the wrong one means searching the wrong
+    # mailbox and reporting a clean run that never happened.
     from_account: str
 
 

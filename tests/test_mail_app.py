@@ -411,13 +411,29 @@ def test_fake_mail_without_accounts_behaves_as_before():
     assert mail.folder_message_ids("Parent/Child") == [1]
 
 
-def test_send_script_asks_which_account_it_sent_from():
-    """The bounce comes back to the sending account, so we must know it."""
+def test_send_script_reads_addresses_with_get():
+    """A bare ``email addresses of`` yields references that will not coerce.
+
+    On 26 August 2026 ``addr as string`` raised -1700 on the first account it
+    touched. ``get`` materialises the list.
+    """
     script = AppleScriptMail()._send_script("leave@list.example", "token", "unsubscribe", "iCloud")
-    assert "send newMessage" in script
-    assert "email addresses of acct" in script
-    # The account must be read before the compose object is discarded.
-    assert script.index("email addresses of acct") < script.index("delete newMessage")
+    assert "(get email addresses of item 1 of wanted)" in script
+    assert "email addresses" not in script.replace("(get email addresses", "")
+
+
+def test_send_script_reads_nothing_back_after_sending():
+    """A step after the irreversible one can only turn a success into a failure.
+
+    The old script matched the sender against every account to name the
+    sending account — a question ``from_account`` already answers. It failed
+    after a request had gone out, so the send was reported as a failure and
+    never recorded for the bounce check.
+    """
+    script = AppleScriptMail()._send_script("leave@list.example", "token", "unsubscribe", "iCloud")
+    after_send = script[script.index("send newMessage") + len("send newMessage"):]
+    assert "repeat" not in after_send
+    assert "sender of newMessage" not in after_send
 
 
 def test_fake_mail_reports_its_sending_account():

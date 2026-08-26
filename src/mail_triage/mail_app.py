@@ -380,12 +380,20 @@ class AppleScriptMail:
         the outgoing message — the compose object — not to anything in a
         mailbox.
 
-        The account is resolved by matching the outgoing message's ``sender``
-        against each account's ``email addresses``. Mail has no "default
-        account" property worth reading, and the account is needed because
-        the bounce comes back to *its* inbox. Read before ``delete``, which
-        discards the compose object. An unmatched sender yields "", which the
-        caller reports rather than guessing at.
+        **Nothing is read back after ``send``.** The script used to match the
+        outgoing message's ``sender`` against every account's ``email
+        addresses`` to report which account had sent it — a question already
+        answered by ``from_account``, since the sender is set from it below.
+        On 26 August 2026 that vestigial loop raised ``-1700`` on the first
+        account it touched (``repeat with addr in email addresses of acct``
+        hands out unresolved references, which will not coerce to string;
+        ``get`` materialises the list and is what the two remaining reads
+        use). The request had already gone — it reached Sent at 18:02:38 —
+        and was reported to the user as a failure, so no send was recorded
+        and the bounce check will never look for its reply. The lesson is not
+        about ``get``: a step that runs *after* the irreversible one can only
+        ever turn a success into a false failure, so there should not be one
+        unless it is asking something only the mailbox can answer.
 
         **The sender is set explicitly, before anything is composed.** The
         account is looked up first and the script errors if it does not exist
@@ -402,7 +410,7 @@ class AppleScriptMail:
             f'  set wanted to (every account whose name is "{account_escaped}")\n'
             "  if wanted is {} then error "
             f'"No account named {account_escaped}" number -1728\n'
-            "  set fromAddresses to email addresses of item 1 of wanted\n"
+            "  set fromAddresses to (get email addresses of item 1 of wanted)\n"
             "  if fromAddresses is missing value or (count of fromAddresses) is 0 then error "
             f'"Account {account_escaped} has no address to send from" number -1728\n'
             "  set fromAddress to item 1 of fromAddresses as string\n"
@@ -415,19 +423,8 @@ class AppleScriptMail:
             f'{{address:"{_escape_applescript_string(to_address)}"}}\n'
             "  end tell\n"
             "  send newMessage\n"
-            "  set senderValue to sender of newMessage as string\n"
-            '  set accountName to ""\n'
-            "  repeat with acct in accounts\n"
-            "    repeat with addr in email addresses of acct\n"
-            "      if senderValue contains (addr as string) then\n"
-            "        set accountName to name of acct as string\n"
-            "        exit repeat\n"
-            "      end if\n"
-            "    end repeat\n"
-            '    if accountName is not "" then exit repeat\n'
-            "  end repeat\n"
             "  delete newMessage\n"
-            "  return accountName\n"
+            "  return fromAddress\n"
             "end tell"
         )
 
@@ -446,10 +443,14 @@ class AppleScriptMail:
         request would have come from an address that never subscribed, which
         identifies nobody.
 
-        Returns "" if the account could not be matched back from the sender,
-        which the caller reports honestly rather than substituting a guess.
+        Returns ``from_account``. The script resolves that name to an address
+        and errors if it cannot, so reaching the return means the send was
+        composed from it; asking Mail afterwards which account it had used
+        added no information and, on 26 August 2026, failed and reported a
+        sent request as a failure. See ``_send_script``.
         """
-        return _run(self._send_script(to_address, subject, body, from_account)).strip()
+        _run(self._send_script(to_address, subject, body, from_account))
+        return from_account
 
     def outbox_contains(self, to_address: str, subject: str) -> bool:
         """Whether a message with this subject and recipient is still queued.

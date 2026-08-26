@@ -235,6 +235,20 @@ read.
   timeout may yet go, and is called failed anyway, which can leave a real
   send with no entry in the log for a bounce to match. That is the better way
   round — the reverse is claiming a success we cannot demonstrate.
+- **A step after the irreversible one can only turn a success into a false
+  failure.** The send script asked Mail, *after* `send`, which account it had
+  sent from — matching the outgoing `sender` against every account's `email
+  addresses`. On 26 August 2026 that raised `-1700` on the first account it
+  touched, because `repeat with addr in email addresses of acct` hands out
+  unresolved references (`«class emad» of item 1 of every «class mact»`) that
+  will not coerce to string; `get` materialises the list. The request had
+  already gone — it reached Sent at 18:02:38 — and the browser showed a red
+  banner, so `record_send` never ran and `unsubscribe --check` will never look
+  for its bounce. The `get` was the proximate bug; the real one is that the
+  loop should not have existed. `from_account` already named the account, the
+  script sets `sender` from it and errors if it cannot resolve one, so the
+  read-back added nothing and could only subtract. Ask the mailbox only what
+  the mailbox alone knows — and, where you must, do it *before* the send.
 - **A failed send left no trace anywhere.** `record_send` runs only after
   success — deliberately, see `sends.py`, because a pre-send record would let
   the bounce check report "no bounce, therefore fine" for a request that never
