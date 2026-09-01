@@ -568,6 +568,29 @@ document.getElementById("undo").addEventListener("click", async () => {
   }
 });
 
+/* Re-snapshots the mailbox and redraws from scratch — the same as quitting
+ * and restarting, but without losing the tab. Anything not yet applied is
+ * simply dropped; anything already applied has left the inbox and so isn't
+ * re-offered anyway. */
+let refreshing = false;
+
+document.getElementById("refresh").addEventListener("click", async () => {
+  if (refreshing) return;
+  refreshing = true;
+  const button = document.getElementById("refresh");
+  button.disabled = true;
+  clearFailure();
+  try {
+    await api("/api/refresh", { method: "POST" });
+    await load();
+  } catch (error) {
+    fail(error);
+  } finally {
+    button.disabled = false;
+    refreshing = false;
+  }
+});
+
 /* --- stopping ------------------------------------------------------------ */
 
 /* q ends the run: the server stops listening and the process exits, exactly

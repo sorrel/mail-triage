@@ -59,6 +59,7 @@ class Router:
         port: int,
         folders: list[str] | None = None,
         unsubscribe_source=None,
+        refresh=None,
         on_quit=None,
     ) -> None:
         self.session = session
@@ -74,6 +75,9 @@ class Router:
         self.token = token
         self.port = port
         self.unsubscribe_source = unsubscribe_source
+        # Re-runs classify_run against a fresh snapshot. None in tests that
+        # never call /api/refresh.
+        self.refresh_run = refresh
         # Set by ``serve``; stopping the socket is the socket's business.
         self.on_quit = on_quit
         self.last_request = 0.0
@@ -101,6 +105,8 @@ class Router:
             return self._decisions(request)
         if request.path == "/api/undo" and request.method == "POST":
             return self._undo()
+        if request.path == "/api/refresh" and request.method == "POST":
+            return self._refresh()
         if request.path == "/api/unsubscribe" and request.method == "GET":
             return Response.json(candidates_payload(self._candidates()))
         if request.path == "/api/unsubscribe/send" and request.method == "POST":
@@ -218,6 +224,24 @@ class Router:
             self.session.run_id, self.config, self.mail, self.config.filing_account
         )
         return Response.json({"reversed": reversed_count, "failed": failed})
+
+    # --- refreshing ---------------------------------------------------------
+
+    def _refresh(self) -> Response:
+        """Re-snapshot the mailbox and redraw proposals, in place.
+
+        Held under the apply lock, so a refresh cannot land mid-move. The
+        old ``run_id`` carries forward: it names an Undo the page may still
+        need to make, and a fresh run cannot re-offer whatever it already
+        moved, so nothing is lost by dropping the old proposals.
+        """
+        if self.refresh_run is None:
+            return Response.json({"error": "refresh is not available"}, status=400)
+        with self._applying:
+            run = self.refresh_run()
+            self.session = Session(run.proposals, run_id=self.session.run_id)
+            self.folders = sorted(run.inputs.folders)
+        return Response.json(proposals_payload(self.session, self.accounts))
 
     # --- stopping ---------------------------------------------------------
 
