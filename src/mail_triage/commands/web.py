@@ -60,6 +60,7 @@ def web(port: int, open_browser: bool, source_names: tuple[str, ...]) -> None:
         port=port,
         folders=inputs.folders,
         unsubscribe_source=lambda: _unsubscribe_candidates(config, mail),
+        refresh=lambda: classify_run(config, sources, guard=guard, db_path=DEFAULT_DB_PATH),
     )
 
     def ready(url: str, actual_port: int) -> None:

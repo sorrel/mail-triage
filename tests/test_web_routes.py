@@ -44,7 +44,7 @@ def fake_mail(rowids=(1,)):
     )
 
 
-def build(tmp_path, proposals=None, mail=None):
+def build(tmp_path, proposals=None, mail=None, refresh=None):
     config = Config(account_url_prefix="imap://AAAAAAAA", local_dir=tmp_path / "local")
     session = Session(proposals if proposals is not None else [proposal()])
     static = tmp_path / "static"
@@ -52,8 +52,22 @@ def build(tmp_path, proposals=None, mail=None):
     router = Router(
         session=session, config=config, mail=mail or fake_mail(),
         accounts=ACCOUNTS, static_dir=static, token=TOKEN, port=PORT,
+        refresh=refresh,
     )
     return router, session
+
+
+class FakeInputs:
+    def __init__(self, folders):
+        self.folders = folders
+
+
+class FakeRun:
+    """Stands in for pipeline.Run: only .proposals and .inputs.folders matter here."""
+
+    def __init__(self, proposals, folders=("Filed/Orders",)):
+        self.proposals = proposals
+        self.inputs = FakeInputs(list(folders))
 
 
 def api(path, method="GET", payload=None):
@@ -270,6 +284,52 @@ def test_undo_reverses_the_run_this_server_made(tmp_path):
 def test_undo_before_anything_was_applied_is_refused(tmp_path):
     router, _ = build(tmp_path)
     assert router.handle(api("/api/undo", method="POST", payload={})).status == 400
+
+
+# --- refreshing ---------------------------------------------------------
+
+def test_refresh_replaces_proposals_with_a_fresh_run(tmp_path):
+    fresh = [proposal(rowid=2, folder="Filed/Keep")]
+    router, _ = build(tmp_path, refresh=lambda: FakeRun(fresh))
+    response = router.handle(api("/api/refresh", method="POST"))
+    assert response.status == 200
+    body = json.loads(response.body)
+    assert len(body["proposals"]) == 1
+    assert body["proposals"][0]["folder"] == "Filed/Keep"
+    # The session the router now holds is the fresh one, not the original.
+    listed = router.handle(api("/api/proposals"))
+    assert json.loads(listed.body) == body
+
+
+def test_refresh_carries_the_run_id_forward_for_undo(tmp_path):
+    mail = fake_mail()
+    router, session = build(tmp_path, mail=mail, refresh=lambda: FakeRun([]))
+    (identifier,) = session.entries
+    router.handle(api(
+        "/api/decisions", method="POST",
+        payload={"decisions": [{"id": identifier, "action": "file"}]},
+    ))
+    run_id_before = router.session.run_id
+    assert run_id_before
+
+    router.handle(api("/api/refresh", method="POST"))
+    assert router.session.run_id == run_id_before
+
+    response = router.handle(api("/api/undo", method="POST", payload={}))
+    assert response.status == 200
+    assert json.loads(response.body)["reversed"] == 1
+
+
+def test_refresh_updates_the_folder_allowlist(tmp_path):
+    router, _ = build(tmp_path, refresh=lambda: FakeRun([], folders=("Filed/New",)))
+    router.handle(api("/api/refresh", method="POST"))
+    assert router.folders == ["Filed/New"]
+
+
+def test_refresh_without_a_callable_is_refused(tmp_path):
+    router, _ = build(tmp_path)
+    response = router.handle(api("/api/refresh", method="POST"))
+    assert response.status == 400
 
 
 # --- quitting ---------------------------------------------------------------
