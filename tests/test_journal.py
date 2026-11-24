@@ -518,4 +518,4 @@ def test_a_run_id_still_sorts_by_time():
     earlier = "2026-08-09T14-31-07-ffff"
     later = "2026-08-09T14-31-08-0000"
     assert sorted([later, earlier]) == [earlier, later]
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[0-9a-f]{4}", new_run_id())
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[0-9a-f]{8}", new_run_id())
