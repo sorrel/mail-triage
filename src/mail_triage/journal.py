@@ -73,7 +73,7 @@ def new_run_id() -> str:
     not have put them back.
     """
     stamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.localtime())
-    return f"{stamp}-{secrets.token_hex(2)}"
+    return f"{stamp}-{secrets.token_hex(4)}"
 
 
 def _journal_path(config: Config, run_id: str) -> Path:
